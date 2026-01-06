@@ -37,6 +37,22 @@ dir.create(paste0(output.dir,"Plots"), showWarnings = FALSE)      # results/Plot
 dir.create(paste0(output.dir,"Plots/RNA"), showWarnings = FALSE)  # results/Plots/RNA：RNA 图
 dir.create(paste0(output.dir,"Plots/ADT"), showWarnings = FALSE)  # results/Plots/ADT：ADT 图
 
+# 缓存与加载工具（RDS）
+cache_path <- function(name) {
+  file.path(output.dir, "Robjects", paste0(project_name, "_", name, ".rds"))
+}
+
+load_or_run <- function(path, expr, label = NULL) {
+  if (file.exists(path)) {
+    message(">>> Loading cache: ", path)
+    return(readRDS(path))
+  }
+  if (!is.null(label)) message(">>> Running: ", label)
+  result <- eval(substitute(expr), envir = parent.frame())
+  saveRDS(result, file = path)
+  result
+}
+
 ################################################################################
 ############################## LOAD PACKAGES  ##################################
 ################################################################################
@@ -79,7 +95,11 @@ library("RColorBrewer")
 ```{r, COUNT DATA RNA}
 ################################## RNA  ########################################
 #COUNT DATA
-rawData <- Read10X(data.dir = data_dir)
+rawData <- load_or_run(
+  cache_path("rawData"),
+  Read10X(data.dir = data_dir),
+  label = "Read10X"
+)
 rawDataRNA <- rawData$`Gene Expression`
 rawDataADT <- rawData$`Antibody Capture`
 ```
@@ -93,36 +113,35 @@ file_name <- "GSE228544_seuratObj_paper_dietSAM2and3_WT_subset_2023.rds.gz"
 full_path <- file.path(data_dir, file_name)
 
 library(R.utils)
-try(gunzip(full_path, remove = FALSE, overwrite = TRUE))# 强制解压，生成一个没有 .gz 后缀的文件
-seuratObjAll <- readRDS("./data/GSE228544/GSE228544_seuratObj_paper_dietSAM2and3_WT_subset_2023.rds")
+try(gunzip(full_path, remove = FALSE, overwrite = TRUE)) # 强制解压，生成一个没有 .gz 后缀的文件
+seuratObjcDC1 <- load_or_run(
+  cache_path("seuratObj_cDC1_subset_cleaned"),
+  {
+    seuratObjAll <- readRDS("./data/GSE228544/GSE228544_seuratObj_paper_dietSAM2and3_WT_subset_2023.rds")
+    table(Idents(seuratObjAll)) #2. 检查它包含哪些细胞类型
+    cDC1s <- WhichCells(seuratObjAll, idents = c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s", 
+                                                "Late immature cDC1s", "Early mature cDC1s", "Late mature cDC1s"))
+    # 检查是否存在这些标签，防止因拼写错误导致提取空对象
+    target_idents <- c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s", 
+                       "Late immature cDC1s", "Early mature cDC1s", "Late mature cDC1s")
+    existing_idents <- intersect(target_idents, levels(Idents(seuratObjAll)))
+    if (length(existing_idents) < length(target_idents)) {
+      warning("部分指定的标签在对象中未找到：", setdiff(target_idents, existing_idents))
+    }
+    seuratObjAll <- UpdateSeuratObject(seuratObjAll)
+    seuratObjcDC1 <- subset(seuratObjAll, idents = existing_idents)
+    rm(seuratObjAll)
+    gc() # 强制进行垃圾回收
+    seuratObjcDC1
+  },
+  label = "subset cDC1 from full Seurat object"
+)
 
-table(Idents(seuratObjAll))#2. 检查它包含哪些细胞类型
-cDC1s<-WhichCells(seuratObjAll, idents = c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s", 
-                                           "Late immature cDC1s", "Early mature cDC1s", "Late mature cDC1s"))
+cDC1s <- colnames(seuratObjcDC1)
 
 ##FILTER DATA
 rawDataRNA<-rawDataRNA[,cDC1s]                                               # 仅保留 cDC1s 这些细胞
 rawDataADT<-rawDataADT[,cDC1s]                                               # ADT 同步过滤到相同细胞
-# 检查是否存在这些标签，防止因拼写错误导致提取空对象
-target_idents <- c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s", 
-                   "Late immature cDC1s", "Early mature cDC1s", "Late mature cDC1s")
-existing_idents <- intersect(target_idents, levels(Idents(seuratObjAll)))
-if(length(existing_idents) < length(target_idents)){
-  warning("部分指定的标签在对象中未找到：", setdiff(target_idents, existing_idents))
-}
-seuratObjAll <- UpdateSeuratObject(seuratObjAll)
-
-seuratObjcDC1 <- subset(seuratObjAll, idents = existing_idents)
-
-# 建议 3: 及时清理内存
-# 提取完子集后，如果不再需要全量对象，请立即将其从内存删除
-rm(seuratObjAll)
-gc() # 强制进行垃圾回收
-
-# 建议 4: 保存提取后的子集，方便下次直接加载
-
-  
-saveRDS(seuratObjcDC1, file = paste0(output.dir,"Robjects/seuratObj_",project_name,"cDC1_subset_cleaned.rds.rds"))
 ```
 
 #质控
@@ -400,25 +419,29 @@ print(qc_summary)
 library(scran)
 library(scuttle)
 
-# 1.1 快速聚类以辅助分池 (防止跨细胞类型池化导致误差)
-set.seed(100) # 保证结果可重复
-quick_clusters <- quickCluster(sce_clean)
+sce_clean <- load_or_run(
+  cache_path("sce_clean_normalized"),
+  {
+    # 1.1 快速聚类以辅助分池 (防止跨细胞类型池化导致误差)
+    set.seed(100) # 保证结果可重复
+    quick_clusters <- quickCluster(sce_clean)
 
-# 1.2 计算分池尺寸因子
-sce_clean <- computePooledFactors(sce_clean, clusters = quick_clusters)
+    # 1.2 计算分池尺寸因子
+    sce_clean <- computePooledFactors(sce_clean, clusters = quick_clusters)
 
-# 1.3 应用归一化：生成 logcounts 矩阵
-# 公式近似为：log2(count / sizeFactor + 1)
-sce_clean <- logNormCounts(sce_clean)
+    # 1.3 应用归一化：生成 logcounts 矩阵
+    # 公式近似为：log2(count / sizeFactor + 1)
+    sce_clean <- logNormCounts(sce_clean)
 
-# 检查 Size Factors 分布
-summary(sizeFactors(sce_clean))
+    # 检查 Size Factors 分布
+    summary(sizeFactors(sce_clean))
+    sce_clean
+  },
+  label = "scran pooled normalization"
+)
 
 # 重要：同步原始矩阵，为后续转 Seurat 或存证做准备
 rawDataFiltered <- rawDataRNA[rownames(sce_clean), colnames(sce_clean)]
-
-# 保存结果，这是良好的工程习惯
-saveRDS(sce_clean, file=paste0(output.dir,"/Robjects/sce_clean_normalized.rds"))
 
 
 ### ------------------ ###
@@ -453,41 +476,58 @@ library(Seurat)
 library(SingleCellExperiment)
 library(ggplot2)
 
-# 1. 创建基础 Seurat 对象 (使用过滤后的原始 counts)
-seurat_obj <- CreateSeuratObject(counts = rawDataFiltered, project = "Scran_SCT_Integration")
+seurat_obj <- load_or_run(
+  cache_path("seurat_obj_sct_clustered"),
+  {
+    # 1. 创建基础 Seurat 对象 (使用过滤后的原始 counts)
+    seurat_obj <- CreateSeuratObject(counts = rawDataFiltered, project = "Scran_SCT_Integration")
 
-# 2. 【核心步骤】手动注入 scran 的 logcounts
-# 我们将 sce_clean 中的 logcounts 矩阵提取出来，赋值给 Seurat RNA assay 的 data 槽位
-# 确保细胞和基因顺序一致（之前已同步过，这里是安全的）
-scran_logcounts <- logcounts(sce_clean)
-seurat_obj[["RNA"]]$data <- as(scran_logcounts, "dgCMatrix") 
-seurat_obj$percent.mito <- sce_clean$subsets_Mito_percent
-# 验证注入结果
-# seurat_obj[["RNA"]]$data[1:5, 1:5] # 此时这里存储的是 scran 的分池归一化值
+    # 2. 【核心步骤】手动注入 scran 的 logcounts
+    # 我们将 sce_clean 中的 logcounts 矩阵提取出来，赋值给 Seurat RNA assay 的 data 槽位
+    # 确保细胞和基因顺序一致（之前已同步过，这里是安全的）
+    scran_logcounts <- logcounts(sce_clean)
+    seurat_obj[["RNA"]]$data <- as(scran_logcounts, "dgCMatrix") 
+    seurat_obj$percent.mito <- sce_clean$subsets_Mito_percent
+    # 验证注入结果
+    # seurat_obj[["RNA"]]$data[1:5, 1:5] # 此时这里存储的是 scran 的分池归一化值
 
-# 3. 运行 SCTransform (独立于 RNA assay 运行，生成新的 SCT assay)
-# SCTransform 默认会读取 counts 槽位进行建模，不会破坏你刚刚注入到 data 槽位的 scran 结果
-seurat_obj <- SCTransform(seurat_obj, 
-                         assay = "RNA", 
-                         new.assay.name = "SCT",
-                         vars.to.regress = "percent.mito", 
-                         verbose = FALSE)
+    # 3. 运行 SCTransform (独立于 RNA assay 运行，生成新的 SCT assay)
+    # SCTransform 默认会读取 counts 槽位进行建模，不会破坏你刚刚注入到 data 槽位的 scran 结果
+    seurat_obj <- SCTransform(seurat_obj, 
+                             assay = "RNA", 
+                             new.assay.name = "SCT",
+                             vars.to.regress = "percent.mito", 
+                             verbose = FALSE)
 
-# 4. 基于 SCT assay 进行下游聚类（Seurat 的强项）
-seurat_obj <- RunPCA(seurat_obj, assay = "SCT", verbose = FALSE)
-print(ElbowPlot(seurat_obj, ndims = 50))
-seurat_obj <- RunUMAP(seurat_obj, dims = 1:25, reduction = "pca")
+    # 4. 基于 SCT assay 进行下游聚类（Seurat 的强项）
+    seurat_obj <- RunPCA(seurat_obj, assay = "SCT", verbose = FALSE)
+    print(ElbowPlot(seurat_obj, ndims = 50))
+    seurat_obj <- RunUMAP(seurat_obj, dims = 1:25, reduction = "pca")
 
-# 1. 寻找邻居：显式命名，防止找不到图
-seurat_obj <- FindNeighbors(seurat_obj, 
-                           dims = 1:25, 
-                           reduction = "pca",
-                           graph.name = c("sct_nn", "sct_snn"))
+    # 1. 寻找邻居：显式命名，防止找不到图
+    seurat_obj <- FindNeighbors(seurat_obj, 
+                               dims = 1:25, 
+                               reduction = "pca",
+                               graph.name = c("sct_nn", "sct_snn"))
 
-# 2. 聚类：指定刚才生成的图名
-seurat_obj <- FindClusters(seurat_obj, 
-                          graph.name = "sct_snn", 
-                          resolution = 0.8)
+    # 2. 聚类：指定刚才生成的图名
+    seurat_obj <- FindClusters(seurat_obj, 
+                              graph.name = "sct_snn", 
+                              resolution = 0.8)
+
+    # --- 运行 tSNE ---
+
+    # reduction = "pca" 告诉函数基于 PCA 空间进行计算
+    seurat_obj <- RunTSNE(seurat_obj, 
+                          dims = 1:25, 
+                          reduction = "pca", 
+                          reduction.name = "tsne", 
+                          reduction.key = "tSNE_",
+                          perplexity = 30) # perplexity 是 tSNE 的核心参数
+    seurat_obj
+  },
+  label = "SCT + PCA/UMAP/tSNE + clustering"
+)
 
 # --- 5. 可视化部分 ---
 
@@ -505,16 +545,6 @@ p2 <- DotPlot(seurat_obj, features = markers_to_plot, assay = "RNA") +
   labs(title = "Marker Expression (scran LogCounts)")
 print(p2)
 # ggsave('DotPlot_scran_Expression.png', width=8, height=6)
-
-# --- 运行 tSNE ---
-
-# reduction = "pca" 告诉函数基于 PCA 空间进行计算
-seurat_obj <- RunTSNE(seurat_obj, 
-                      dims = 1:25, 
-                      reduction = "pca", 
-                      reduction.name = "tsne", 
-                      reduction.key = "tSNE_",
-                      perplexity = 30) # perplexity 是 tSNE 的核心参数
 
 # --- 可视化对比 ---
 
@@ -683,9 +713,16 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
 ```{r, 执行双细胞检测, message=FALSE}
 
 # 1. 运行双细胞检测
-seurat_obj <- runDoubletFinder(seurat_obj, PCs = 1:25, minPCT = 1, maxPCT = 15, pN = 0.25)
-# 2. 清理元数据
- seurat_obj@meta.data <- seurat_obj@meta.data[, !grepl("pANN|DF.classifications", colnames(seurat_obj@meta.data))]
+seurat_obj <- load_or_run(
+  cache_path("seurat_obj_doublet_scored"),
+  {
+    seurat_obj <- runDoubletFinder(seurat_obj, PCs = 1:25, minPCT = 1, maxPCT = 15, pN = 0.25)
+    # 2. 清理元数据
+    seurat_obj@meta.data <- seurat_obj@meta.data[, !grepl("pANN|DF.classifications", colnames(seurat_obj@meta.data))]
+    seurat_obj
+  },
+  label = "DoubletFinder"
+)
 # # 3. 检查结果 (注意：变量名统一为 seurat_obj)
  table(as.character(seurat_obj$DFPrediction)) 
 # # 4. 过滤双细胞 (添加 as.character 确保万无一失)，过滤掉 High Confidence 的细胞 (可以根据需要调整过滤范围)
@@ -721,17 +758,24 @@ p1 <- DimPlot(seurat_obj, group.by = "DFPrediction",
 # 1. 直接从原始对象中提取 Singlet，它会自动保留原有的 UMAP 坐标（上面已运行）
 #seurat_obj_clean <- subset(seurat_obj, subset = as.character(DFPrediction) %in% c("Singlet", "Low Confidence", "Low Confidence adjusted"))
 # 
-seurat_obj_clean <- subset(seurat_obj, subset = DFPrediction == "Singlet")
-# 2. 重新寻找高变基因和缩放 (针对清洗后的数据)
-seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean)
-seurat_obj_clean <- ScaleData(seurat_obj_clean)
+seurat_obj_clean <- load_or_run(
+  cache_path("seurat_obj_clean_reclustered"),
+  {
+    seurat_obj_clean <- subset(seurat_obj, subset = DFPrediction == "Singlet")
+    # 2. 重新寻找高变基因和缩放 (针对清洗后的数据)
+    seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean)
+    seurat_obj_clean <- ScaleData(seurat_obj_clean)
 
-# 3. 重新跑 PCA 和 聚类 (为了得到更纯净的分群)
-# 注意：不要重新跑 RunUMAP！！
-#seurat_obj_clean <- RunUMAP(seurat_obj_clean, dims = 1:25)
-seurat_obj_clean <- RunPCA(seurat_obj_clean, verbose = FALSE)
-seurat_obj_clean <- FindNeighbors(seurat_obj_clean, dims = 1:25)
-seurat_obj_clean <- FindClusters(seurat_obj_clean, resolution = 0.5)
+    # 3. 重新跑 PCA 和 聚类 (为了得到更纯净的分群)
+    # 注意：不要重新跑 RunUMAP！！
+    #seurat_obj_clean <- RunUMAP(seurat_obj_clean, dims = 1:25)
+    seurat_obj_clean <- RunPCA(seurat_obj_clean, verbose = FALSE)
+    seurat_obj_clean <- FindNeighbors(seurat_obj_clean, dims = 1:25)
+    seurat_obj_clean <- FindClusters(seurat_obj_clean, resolution = 0.5)
+    seurat_obj_clean
+  },
+  label = "recluster singlets"
+)
 
 # --- 绘制对比图 ---
 # 此时 p2 使用的是原图的坐标，但着色是基于“清理后”的数据重新聚类的结果
@@ -772,9 +816,13 @@ print(head(Idents(seurat_obj_clean)))
 
 # 3. 运行差异表达分析 (DEG)
 # 使用 SCT assay 的数据寻找每个群的特征基因
-exp.markers <- FindAllMarkers(seurat_obj_clean, 
-                              assay = "SCT", 
-                              slot = "data")
+exp.markers <- load_or_run(
+  cache_path("exp_markers_sct"),
+  FindAllMarkers(seurat_obj_clean, 
+                 assay = "SCT", 
+                 slot = "data"),
+  label = "SCT DEG (FindAllMarkers)"
+)
                               #, 
                               #only.pos = TRUE) # 只找高表达的基因，方便鉴定类型
 
@@ -870,49 +918,60 @@ message("数据已成功保存至: ", robject_dir)
 ###########
 #ADT
 ```{r, ADT COUNT DATA}
-rawDataADT <- rawData$`Antibody Capture`
-raw.names <- rownames(rawDataADT)                 # 抗体名称（ADT features）
-cells.use  <- intersect(colnames(rawDataADT), colnames(seurat_obj_clean))
-# ↑ 取 ADT 与 seurat_obj_clean 共同拥有的细胞条形码（保证对齐）
-ABS.use  <- rownames(rawDataADT)                  # 要用的抗体（这里等于全部）
-rawDataADT <- rawDataADT[ABS.use, cells.use]      # 按共同细胞截取 ADT 矩阵
+seurat_obj_clean <- load_or_run(
+  cache_path("seurat_obj_clean_adt"),
+  {
+    rawDataADT <- rawData$`Antibody Capture`
+    raw.names <- rownames(rawDataADT)                 # 抗体名称（ADT features）
+    cells.use  <- intersect(colnames(rawDataADT), colnames(seurat_obj_clean))
+    # ↑ 取 ADT 与 seurat_obj_clean 共同拥有的细胞条形码（保证对齐）
+    ABS.use  <- rownames(rawDataADT)                  # 要用的抗体（这里等于全部）
+    rawDataADT <- rawDataADT[ABS.use, cells.use]      # 按共同细胞截取 ADT 矩阵
 
-seurat_obj_clean[["ADT"]] <- CreateAssayObject(counts = rawDataADT[,colnames(seurat_obj_clean)])
-# ↑ 把 ADT assay 加到同一个 Seurat 对象
-# [注] 这里再次用 colnames(seurat_obj_clean) 排序，确保 ADT 列顺序与对象细胞顺序一致
-# CLR transformation
-seurat_obj_clean <- NormalizeData(seurat_obj_clean, assay = "ADT", normalization.method = "CLR", verbose=T)
-# ↑ ADT 常用 CLR（centered log-ratio）归一化（按细胞做“相对丰度”标准化）
+    seurat_obj_clean[["ADT"]] <- CreateAssayObject(counts = rawDataADT[,colnames(seurat_obj_clean)])
+    # ↑ 把 ADT assay 加到同一个 Seurat 对象
+    # [注] 这里再次用 colnames(seurat_obj_clean) 排序，确保 ADT 列顺序与对象细胞顺序一致
+    # CLR transformation
+    seurat_obj_clean <- NormalizeData(seurat_obj_clean, assay = "ADT", normalization.method = "CLR", verbose=T)
+    # ↑ ADT 常用 CLR（centered log-ratio）归一化（按细胞做“相对丰度”标准化）
 
-# Informative Antibodies
-seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean,assay="ADT",selection.method = "vst", nfeatures=nrow(rawDataADT))
-# ↑ 把所有抗体都作为“可变特征”（nfeatures = 抗体总数）
-HVABs <- VariableFeatures(seurat_obj_clean, assay = "ADT")   # 取出被选为可变的抗体（通常就是全部）
+    # Informative Antibodies
+    seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean,assay="ADT",selection.method = "vst", nfeatures=nrow(rawDataADT))
+    # ↑ 把所有抗体都作为“可变特征”（nfeatures = 抗体总数）
+    HVABs <- VariableFeatures(seurat_obj_clean, assay = "ADT")   # 取出被选为可变的抗体（通常就是全部）
 
-# SCALING & PCA
-seurat_obj_clean <- ScaleData(seurat_obj_clean, assay = "ADT")      # 标准化 ADT 表达（每个抗体中心化/标准化）
-seurat_obj_clean <- RunPCA(object = seurat_obj_clean, assay = "ADT",
-                    features = VariableFeatures(seurat_obj_clean, assay = "ADT"),
-                    npcs = nrow(rawDataADT), ndims.print = 1:5, nfeatures.print = 10,
-                    reduction.name = "ADT_pca",reduction.key = "adtPC_")
-# ↑ 在 ADT assay 上跑 PCA：PC 数设为抗体总数（一般也可设小些）
+    # SCALING & PCA
+    seurat_obj_clean <- ScaleData(seurat_obj_clean, assay = "ADT")      # 标准化 ADT 表达（每个抗体中心化/标准化）
+    seurat_obj_clean <- RunPCA(object = seurat_obj_clean, assay = "ADT",
+                        features = VariableFeatures(seurat_obj_clean, assay = "ADT"),
+                        npcs = nrow(rawDataADT), ndims.print = 1:5, nfeatures.print = 10,
+                        reduction.name = "ADT_pca",reduction.key = "adtPC_")
+    # ↑ 在 ADT assay 上跑 PCA：PC 数设为抗体总数（一般也可设小些）
 
-# Find clusters
-seurat_obj_clean <- FindNeighbors(object = seurat_obj_clean, reduction = "ADT_pca", dims = dimsToUse)
-# ↑ 用 ADT_pca 前 dimsToUse 个 PC 建图
-seurat_obj_clean <- FindClusters(object = seurat_obj_clean,  graph.name = "ADT_snn", resolution = resToUse)
-# ↑ 在 ADT_snn 图上聚类
-# [潜在问题] 同 RNA：graph.name 是否真叫 "ADT_snn" 不一定；且这里也没显式创建 ADT_clusters 列
+    # Find clusters
+    seurat_obj_clean <- FindNeighbors(object = seurat_obj_clean, reduction = "ADT_pca", dims = dimsToUse)
+    # ↑ 用 ADT_pca 前 dimsToUse 个 PC 建图
+    seurat_obj_clean <- FindClusters(object = seurat_obj_clean,  graph.name = "ADT_snn", resolution = resToUse)
+    # ↑ 在 ADT_snn 图上聚类
+    # [潜在问题] 同 RNA：graph.name 是否真叫 "ADT_snn" 不一定；且这里也没显式创建 ADT_clusters 列
 
-# tSNE
-seurat_obj_clean <- RunTSNE(object = seurat_obj_clean, dims = dimsToUse, assay = "ADT", reduction = "ADT_pca",
-                     reduction.name = "ADT_tsne", reduction.key = "adtTSNE_")
-# ↑ ADT 的 tSNE
+    # tSNE
+    seurat_obj_clean <- RunTSNE(object = seurat_obj_clean, dims = dimsToUse, assay = "ADT", reduction = "ADT_pca",
+                         reduction.name = "ADT_tsne", reduction.key = "adtTSNE_")
+    # ↑ ADT 的 tSNE
 
-# UMAP
-seurat_obj_clean <- RunUMAP(seurat_obj_clean, dims =1: dimsToUse, n_neighbors = 30, assay = "ADT", reduction ="ADT_pca",
-                     reduction.name = "ADT_umap", reduction.key = "adtUMAP_")
-# ↑ ADT 的 UMAP
+    # UMAP
+    seurat_obj_clean <- RunUMAP(seurat_obj_clean, dims =1: dimsToUse, n_neighbors = 30, assay = "ADT", reduction ="ADT_pca",
+                         reduction.name = "ADT_umap", reduction.key = "adtUMAP_")
+    # ↑ ADT 的 UMAP
+
+    if (!"ADT_clusters" %in% colnames(seurat_obj_clean@meta.data)) {
+      seurat_obj_clean$ADT_clusters <- Idents(seurat_obj_clean)
+    }
+    seurat_obj_clean
+  },
+  label = "ADT preprocessing + PCA/UMAP/tSNE + clustering"
+)
 
 # DEG
 Idents(object = seurat_obj_clean) <- 'ADT_clusters'
@@ -920,11 +979,15 @@ Idents(object = seurat_obj_clean) <- 'ADT_clusters'
 # [潜在问题] ADT_clusters 在脚本中并未生成；通常 FindClusters 生成的是 seurat_clusters 或 graph_res.* 列
 # [建议修正] FindClusters 后加：seurat_obj_clean$ADT_clusters <- Idents(seurat_obj_clean)
 
-exp.markers <- FindAllMarkers(seurat_obj_clean,assay="ADT")
-# ↑ 基于 ADT assay 找每个 cluster 的差异抗体（marker 抗体）
-
-saveRDS(seurat_obj_clean, file = paste0(output.dir,"Robjects/seurat_obj_clean_",project_name,"_ADT.rds"))
-# ↑ 保存包含 ADT 分析结果的 Seurat 对象（注意：这是同一个对象，包含 RNA+ADT+多套降维/聚类）
+exp.markers <- load_or_run(
+  cache_path("exp_markers_adt"),
+  FindAllMarkers(seurat_obj_clean,assay="ADT"),
+  label = "ADT markers (FindAllMarkers)"
+)
+adt_obj_path <- paste0(output.dir,"Robjects/seurat_obj_clean_",project_name,"_ADT.rds")
+if (!file.exists(adt_obj_path)) {
+  saveRDS(seurat_obj_clean, file = adt_obj_path)
+}
 saveRDS(exp.markers, file=paste0(output.dir,"Robjects/ExpressionMarkers_",project_name, "_ADT.rds"))
 
 ```
@@ -938,71 +1001,78 @@ saveRDS(exp.markers, file=paste0(output.dir,"Robjects/ExpressionMarkers_",projec
 # 1. ADT 数据集成与独立预处理 (局部调用)
 # ==========================================
 
-# 提取并对齐 ADT 矩阵
-raw_adt_matrix <- as.matrix(rawData$`Antibody Capture`)
-common_cells   <- intersect(colnames(raw_adt_matrix), colnames(seurat_obj_clean))
+seurat_obj_clean <- load_or_run(
+  cache_path("seurat_obj_wnn_final"),
+  {
+    # 提取并对齐 ADT 矩阵
+    raw_adt_matrix <- as.matrix(rawData$`Antibody Capture`)
+    common_cells   <- intersect(colnames(raw_adt_matrix), colnames(seurat_obj_clean))
 
-# 添加 ADT Assay (确保名称对齐)
-seurat_obj_clean[["ADT"]] <- CreateAssayObject(counts = raw_adt_matrix[, colnames(seurat_obj_clean)])
+    # 添加 ADT Assay (确保名称对齐)
+    seurat_obj_clean[["ADT"]] <- CreateAssayObject(counts = raw_adt_matrix[, colnames(seurat_obj_clean)])
 
-# ADT 预处理：显式指定 assay = "ADT"，不切换全局 DefaultAssay
-seurat_obj_clean <- NormalizeData(seurat_obj_clean, assay = "ADT", normalization.method = "CLR", margin = 2)
-seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean, assay = "ADT", nfeatures = nrow(seurat_obj_clean[["ADT"]]))
-seurat_obj_clean <- ScaleData(seurat_obj_clean, assay = "ADT")
-seurat_obj_clean <- RunPCA(seurat_obj_clean, assay = "ADT", reduction.name = "adt_pca", reduction.key = "adtPC_")
+    # ADT 预处理：显式指定 assay = "ADT"，不切换全局 DefaultAssay
+    seurat_obj_clean <- NormalizeData(seurat_obj_clean, assay = "ADT", normalization.method = "CLR", margin = 2)
+    seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean, assay = "ADT", nfeatures = nrow(seurat_obj_clean[["ADT"]]))
+    seurat_obj_clean <- ScaleData(seurat_obj_clean, assay = "ADT")
+    seurat_obj_clean <- RunPCA(seurat_obj_clean, assay = "ADT", reduction.name = "adt_pca", reduction.key = "adtPC_")
 
-# ==========================================
-# 2. 独立模态分析 (用于后续对比与权重计算)
-# ==========================================
+    # ==========================================
+    # 2. 独立模态分析 (用于后续对比与权重计算)
+    # ==========================================
 
-# A. ADT 驱动的降维与聚类
-seurat_obj_clean <- FindNeighbors(seurat_obj_clean, reduction = "adt_pca", dims = 1:20, graph.name = "adt_snn")
-seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "adt_snn", resolution = 0.8)
-seurat_obj_clean$ADT_clusters <- Idents(seurat_obj_clean) # 备份蛋白质聚类
-seurat_obj_clean <- RunUMAP(seurat_obj_clean, reduction = "adt_pca", dims = 1:15, 
-                             reduction.name = "adt_umap", reduction.key = "adtUMAP_")
+    # A. ADT 驱动的降维与聚类
+    seurat_obj_clean <- FindNeighbors(seurat_obj_clean, reduction = "adt_pca", dims = 1:20, graph.name = "adt_snn")
+    seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "adt_snn", resolution = 0.8)
+    seurat_obj_clean$ADT_clusters <- Idents(seurat_obj_clean) # 备份蛋白质聚类
+    seurat_obj_clean <- RunUMAP(seurat_obj_clean, reduction = "adt_pca", dims = 1:15, 
+                                 reduction.name = "adt_umap", reduction.key = "adtUMAP_")
 
-# B. SCT (RNA) 驱动的聚类
-seurat_obj_clean <- FindNeighbors(seurat_obj_clean, reduction = "pca", dims = 1:25, graph.name = "sct_snn")
-seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "sct_snn", resolution = 0.6)
-seurat_obj_clean$SCT_clusters <- Idents(seurat_obj_clean) # 备份转录组聚类
+    # B. SCT (RNA) 驱动的聚类
+    seurat_obj_clean <- FindNeighbors(seurat_obj_clean, reduction = "pca", dims = 1:25, graph.name = "sct_snn")
+    seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "sct_snn", resolution = 0.6)
+    seurat_obj_clean$SCT_clusters <- Idents(seurat_obj_clean) # 备份转录组聚类
 
-# ==========================================
-# 3. WNN 多模态融合 (核心模块)
-# ==========================================
+    # ==========================================
+    # 3. WNN 多模态融合 (核心模块)
+    # ==========================================
 
-# 计算加权邻居图 (wsnn)
-# 这一步自动计算每个细胞对 RNA 和 ADT 的依赖权重
-seurat_obj_clean <- FindMultiModalNeighbors(
-  seurat_obj_clean, 
-  reduction.list = list("pca", "adt_pca"), 
-  dims.list = list(1:25, 1:20), 
-  modality.weight.name = "WNN_weight"
+    # 计算加权邻居图 (wsnn)
+    # 这一步自动计算每个细胞对 RNA 和 ADT 的依赖权重
+    seurat_obj_clean <- FindMultiModalNeighbors(
+      seurat_obj_clean, 
+      reduction.list = list("pca", "adt_pca"), 
+      dims.list = list(1:25, 1:20), 
+      modality.weight.name = "WNN_weight"
+    )
+
+    # 运行 WNN 驱动的 UMAP (终极坐标)
+    seurat_obj_clean <- RunUMAP(seurat_obj_clean, 
+                                 nn.name = "weighted.nn", 
+                                 reduction.name = "wnn_umap", 
+                                 reduction.key = "wnnUMAP_")
+
+    # 基于 WNN 融合图进行聚类 (通常最能反映真实的 cDC1 亚群)
+    seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "wsnn", resolution = 0.4)
+    seurat_obj_clean$WNN_clusters <- Idents(seurat_obj_clean)
+
+    # ==========================================
+    # 4. 差异表达分析 (基于 WNN 聚类结果)
+    # ==========================================
+
+    # 切换 Ident 到 WNN 结果进行最终分析
+    Idents(seurat_obj_clean) <- "WNN_clusters"
+
+    # 设置默认 Assay 为 SCT 以便进行基因差异分析
+    DefaultAssay(seurat_obj_clean) <- "SCT"
+    exp.markers <- FindAllMarkers(seurat_obj_clean, assay = "SCT", slot = "data", only.pos = TRUE)
+
+    dir.create(paste0(output.dir, "Files"), recursive = TRUE, showWarnings = FALSE)
+    write.csv(exp.markers, file = paste0(output.dir, "Files/All_Markers_by_Cluster.csv"))
+    seurat_obj_clean
+  },
+  label = "WNN integration + clustering"
 )
-
-# 运行 WNN 驱动的 UMAP (终极坐标)
-seurat_obj_clean <- RunUMAP(seurat_obj_clean, 
-                             nn.name = "weighted.nn", 
-                             reduction.name = "wnn_umap", 
-                             reduction.key = "wnnUMAP_")
-
-# 基于 WNN 融合图进行聚类 (通常最能反映真实的 cDC1 亚群)
-seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "wsnn", resolution = 0.4)
-seurat_obj_clean$WNN_clusters <- Idents(seurat_obj_clean)
-
-# ==========================================
-# 4. 差异表达分析 (基于 WNN 聚类结果)
-# ==========================================
-
-# 切换 Ident 到 WNN 结果进行最终分析
-Idents(seurat_obj_clean) <- "WNN_clusters"
-
-# 设置默认 Assay 为 SCT 以便进行基因差异分析
-DefaultAssay(seurat_obj_clean) <- "SCT"
-exp.markers <- FindAllMarkers(seurat_obj_clean, assay = "SCT", slot = "data", only.pos = TRUE)
-
-dir.create(paste0(output.dir, "Files"), recursive = TRUE, showWarnings = FALSE)
-write.csv(exp.markers, file = paste0(output.dir, "Files/All_Markers_by_Cluster.csv"))
 
 # ==========================================
 # 5. 可视化增强 (多维对比)
@@ -1081,7 +1151,10 @@ print(p_dot)
 #     seurat_obj_clean$cell_type <- Idents(seurat_obj_clean)
 # }
 
-saveRDS(seurat_obj_clean, file = paste0(output.dir, "Robjects/seurat_obj_WNN_final.rds"))
+wnn_output <- paste0(output.dir, "Robjects/seurat_obj_WNN_final.rds")
+if (!file.exists(wnn_output)) {
+  saveRDS(seurat_obj_clean, file = wnn_output)
+}
 ```
 
 
