@@ -20,6 +20,59 @@ Here's an overview of the various R scripts used in processing the Bulk and CITE
 - 8.script_CITEseq_SAM_WT_aggr_cDC1_subset_TI_SCT.R: Script for trajectory inference on the SCT assay of the cDC1 subset of the WT_aggr object
 - 9.script_CITEseq_SAM_WT_aggr_cDC1_subset_Dorothea.R: Script for TF analysis (DoRothEA) of the cDC1 subset of the WT_aggr object
 
+## Dependencies
+
+### Requirements
+- R version: >= 4.0.0
+- Bioconductor: >= 3.14
+
+### Installation
+
+#### Quick Setup (Recommended)
+For reproducible dependency management with renv:
+```r
+# Run the setup script
+source("setup_dependencies.R")
+```
+
+#### Manual Installation
+If you prefer manual installation:
+```r
+# Install BiocManager for Bioconductor packages
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# Install Bioconductor packages
+BiocManager::install(c("limma", "edgeR", "scater", "scran",
+                       "SingleCellExperiment", "dorothea"))
+
+# Install CRAN packages
+install.packages(c("Seurat", "tidyverse", "gridExtra", "openxlsx",
+                   "RColorBrewer", "viridis", "pheatmap", "future",
+                   "dyno", "DoubletFinder"))
+```
+
+#### For Collaborators
+If an `renv.lock` file is present:
+```r
+# Install renv
+install.packages("renv")
+
+# Restore exact package versions
+renv::restore()
+```
+
+### Key Packages
+- **Seurat**: Single-cell RNA-seq analysis framework
+- **limma/edgeR**: Differential expression analysis for bulk RNA-seq
+- **scater/scran**: Single-cell QC and normalization
+- **dyno**: Trajectory inference
+- **dorothea**: Transcription factor activity inference
+- **tidyverse**: Data manipulation and visualization
+
+### Dependency Documentation
+See `DEPENDENCY_AUDIT.md` for a comprehensive analysis of all dependencies, including security recommendations and cleanup suggestions.
+
 ## Citation
 
 Victor Bosteels et al., LXR signaling controls homeostatic dendritic cell maturation. Sci. Immunol. 8, eadd3955(2023). DOI: https://doi.org/10.1126/sciimmunol.add3955
