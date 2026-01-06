@@ -1,0 +1,1375 @@
+---
+title: "01_2025_12_26_GitHub_CITE-seq 分析流程 (智能缓存优化版)"
+author: "baishuai"
+date: "2025-12-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# 📚 使用说明
+
+本脚本已经过**智能缓存优化**,可以显著提升分析效率:
+
+## ✨ 主要优化
+
+1. **智能缓存系统**: 耗时操作会自动保存到 `results/Cache/` 目录
+2. **增量分析**: 重新运行时自动检测并加载缓存,避免重复计算
+3. **内存优化**: 大对象使用后自动清理,降低内存占用
+4. **进度提示**: 清晰显示每个步骤的状态、耗时和文件大小
+
+## 🎯 优化的关键节点
+
+| 缓存文件 | 描述 | 预计耗时 |
+|---------|------|---------|
+| `01_cdc1_subset_extracted.rds` | cDC1 子集提取 | 2-5 分钟 |
+| `03_sce_normalized.rds` | Scran 归一化 | 3-8 分钟 |
+| `04_seurat_sct_clustered.rds` | SCTransform + 降维 + 聚类 | 10-20 分钟 |
+| `05_doublet_detected.rds` | DoubletFinder 双细胞检测 | 10-20 分钟 |
+| `06_deg_markers_rna.rds` | RNA 差异基因分析 | 5-15 分钟 |
+| `07_wnn_multimodal_integrated.rds` | WNN 多模态融合 | 8-15 分钟 |
+| `08_deg_markers_wnn.rds` | WNN 差异基因分析 | 5-15 分钟 |
+
+## 🚀 快速开始
+
+### 首次运行
+直接运行脚本,系统会自动计算并保存所有缓存
+
+### 后续运行
+- **快速模式**: 自动加载缓存,几分钟内完成所有可视化
+- **重新计算**: 删除对应的缓存文件,或在代码块中设置 `force_recompute = TRUE`
+
+### 缓存管理
+```r
+# 查看缓存大小
+list.files("results/Cache/", full.names = TRUE) %>%
+  file.info() %>%
+  select(size) %>%
+  mutate(size_mb = round(size/1024/1024, 2))
+
+# 清除所有缓存 (谨慎使用!)
+unlink("results/Cache/*")
+```
+
+## ⚠️ 注意事项
+
+1. 首次运行可能需要 **1-2 小时**,但后续运行仅需 **几分钟**
+2. 确保磁盘有足够空间 (建议至少 **10GB**)
+3. 如果修改了上游参数 (如 `dimsToUse`, `resToUse`),请删除对应的缓存文件
+4. 缓存文件可安全删除,下次运行会自动重新生成
+
+---
+
+
+# 设置工作目录
+
+```{r, 设置工作目录}
+##############################SPECIFY INPUT  AND OUTPUT ##################################
+
+# setwd('/srv/data/10x/ABC/ABC001/')          # 设置工作目录：后续相对路径都会基于这里解析
+# output.dir <- "results/"                    # 输出主目录（相对路径）
+# samplename <- "ABC001"                      # 样本名
+# experiment <- samplename                    # experiment 名（这里直接等于样本名，后面用于 project 字段）
+
+# 设置路径参数（基于您提供的路径）
+data_dir <- "./data/GSE228544/"     # 10X数据目录
+output.dir <- "results/"            # 输出主目录
+project_name <- "GSE228544_CITE"    # 项目/样本名称
+
+dimsToUse <- 25                             # 用于邻居图/UMAP/tSNE/聚类的 PCA 维度数（这里写死 25）
+resToUse <- 0.8                             # 聚类分辨率（Seurat FindClusters 的 resolution）
+
+#dimsToUse <- 25 #WT_aggr (RNA/ADT) = 25; cDC1_subset RNA = 20, ADT = 15; cDC2 subset RNA = 30, ADT = 20
+#resToUse <- 0.8 #WT_aggr (RNA/ADT) = 0.8; cDC1 subset (RNA/ADT) = 0.8; cDC2 subset (RNA/ADT) = 0.8
+
+
+dir.create(output.dir, showWarnings = FALSE)                      # 创建 results/（若已存在会 warning；更稳妥可加 showWarnings=FALSE）
+dir.create(paste0(output.dir,"Robjects"), showWarnings = FALSE)   # results/Robjects：保存 RDS
+dir.create(paste0(output.dir,"Plots"), showWarnings = FALSE)      # results/Plots：保存图
+dir.create(paste0(output.dir,"Plots/RNA"), showWarnings = FALSE)  # results/Plots/RNA：RNA 图
+dir.create(paste0(output.dir,"Plots/ADT"), showWarnings = FALSE)  # results/Plots/ADT：ADT 图
+
+################################################################################
+############################## LOAD PACKAGES  ##################################
+################################################################################
+
+```
+# 加载R包LOAD PACKAGES  ##
+```{r, load packages}
+############################## LOAD PACKAGES  ##################################
+
+library("tidyverse")                        # tidyverse：数据处理/可视化集合（含 ggplot2/dplyr 等）
+library("Seurat")                           # Seurat：单细胞主流程
+library("SingleCellExperiment")             # SCE：另一套单细胞对象结构（用于 scater/scran）
+library("scater")                           # scater：QC/归一化工具
+library("scran")                            # scran：size factor/去批次等常用
+library('DoubletFinder')                    # DoubletFinder：双细胞检测
+#library('fields')                           # fields：一些数值工具（本脚本后面未直接使用）
+#library('modes')                            # modes：统计分布/众数工具（本脚本后面未直接使用）
+library("dplyr")                            # dplyr：数据处理（tidyverse 已包含，这里重复但无害）
+library("stringr")                          # stringr：字符串处理（tidyverse 已包含）
+library("readr")                            # readr：读写（tidyverse 已包含）
+library("scuttle")
+library("ggplot2")
+library("patchwork")
+library("RColorBrewer")
+#if (!requireNamespace("modes", quietly = TRUE)) install.packages("modes")
+```
+
+# 智能缓存系统
+```{r, cache helper functions}
+################################################################################
+##################### 智能缓存助手函数 #########################################
+################################################################################
+
+# 缓存目录设置
+cache_dir <- paste0(output.dir, "Cache/")
+dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+
+# 缓存加载/保存助手函数
+load_or_compute <- function(cache_file, compute_fn, force_recompute = FALSE, description = "") {
+  cache_path <- paste0(cache_dir, cache_file)
+
+  if (!force_recompute && file.exists(cache_path)) {
+    cat("\n", strrep("=", 80), "\n")
+    cat("✓ [缓存加载] ", description, "\n")
+    cat("  文件: ", cache_file, "\n")
+    cat("  大小: ", round(file.size(cache_path)/1024/1024, 2), " MB\n")
+    cat(strrep("=", 80), "\n\n")
+    return(readRDS(cache_path))
+  } else {
+    cat("\n", strrep("=", 80), "\n")
+    cat("⚙ [开始计算] ", description, "\n")
+    cat("  这可能需要几分钟...\n")
+    cat(strrep("=", 80), "\n\n")
+
+    start_time <- Sys.time()
+    result <- compute_fn()
+    end_time <- Sys.time()
+
+    # 保存缓存
+    saveRDS(result, cache_path, compress = TRUE)
+
+    cat("\n", strrep("=", 80), "\n")
+    cat("✓ [计算完成] ", description, "\n")
+    cat("  耗时: ", round(difftime(end_time, start_time, units = "mins"), 2), " 分钟\n")
+    cat("  已保存至: ", cache_file, "\n")
+    cat("  大小: ", round(file.size(cache_path)/1024/1024, 2), " MB\n")
+    cat(strrep("=", 80), "\n\n")
+
+    return(result)
+  }
+}
+
+# 内存清理函数
+clean_memory <- function(objects_to_remove = NULL) {
+  if (!is.null(objects_to_remove)) {
+    rm(list = objects_to_remove, envir = .GlobalEnv)
+  }
+  gc(verbose = FALSE)
+  invisible(NULL)
+}
+
+cat("✓ 智能缓存系统已加载\n")
+cat("  缓存目录:", cache_dir, "\n")
+cat("  提示: 如需重新计算，请删除对应的缓存文件或设置 force_recompute = TRUE\n\n")
+```
+
+# RNA  
+## COUNT DATA
+在单细胞分析中，99%的情况应该使用rawDataRNA <- rawData$`Gene Expression`  
+只有在以下情况才考虑rawDataRNA <- as.matrix(rawData$`Gene Expression`) ：
+1. 数据量非常小（几百个细胞）
+2. 必须使用只接受普通矩阵的函数
+3. 作为临时调试手段
+文献官方的GitHub代码是：
+  # rawData <- Read10X_h5("rawFiles/filtered_feature_bc_matrix.h5")  # 读入 10x h5（包含 RNA 和 ADT 两个 assay）
+  # rawDataRNA <- as.matrix(rawData$`Gene Expression`)  # 取 RNA counts 并转为 dense matrix
+这两行代码的潜在问题是： as.matrix 会把稀疏矩阵变成稠密矩阵，数据大时非常容易爆内存，所以修正后的代码为：rawDataRNA <- rawData$`Gene Expression，即保持稀疏
+
+```{r, COUNT DATA RNA}
+################################## RNA  ########################################
+#COUNT DATA
+rawData <- Read10X(data.dir = data_dir)
+rawDataRNA <- rawData$`Gene Expression`
+rawDataADT <- rawData$`Antibody Capture`
+```
+
+## Seurat 对象中提取特定的 cDC1（1型常规树突状细胞） 谱系细胞
+```{r,  Extra for cDC1 object }
+##################### Extra for cDC1 object #####################
+
+# 使用缓存机制提取 cDC1 子集
+cdc1_data <- load_or_compute(
+  cache_file = "01_cdc1_subset_extracted.rds",
+  description = "cDC1 子集提取 (解压 + 读取 + 过滤)",
+  compute_fn = function() {
+    # 设置路径和文件名
+    file_name <- "GSE228544_seuratObj_paper_dietSAM2and3_WT_subset_2023.rds.gz"
+    full_path <- file.path(data_dir, file_name)
+
+    library(R.utils)
+    try(gunzip(full_path, remove = FALSE, overwrite = TRUE))
+
+    # 读取完整对象
+    seuratObjAll <- readRDS("./data/GSE228544/GSE228544_seuratObj_paper_dietSAM2and3_WT_subset_2023.rds")
+    cat("原始对象细胞类型分布:\n")
+    print(table(Idents(seuratObjAll)))
+
+    # 定义目标细胞类型
+    target_idents <- c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s",
+                       "Late immature cDC1s", "Early mature cDC1s", "Late mature cDC1s")
+
+    # 检查标签是否存在
+    existing_idents <- intersect(target_idents, levels(Idents(seuratObjAll)))
+    if(length(existing_idents) < length(target_idents)){
+      warning("部分指定的标签在对象中未找到：", paste(setdiff(target_idents, existing_idents), collapse = ", "))
+    }
+
+    # 更新并提取子集
+    seuratObjAll <- UpdateSeuratObject(seuratObjAll)
+    seuratObjcDC1 <- subset(seuratObjAll, idents = existing_idents)
+
+    # 获取 cDC1 细胞 ID
+    cDC1s <- colnames(seuratObjcDC1)
+
+    # 过滤 RNA 和 ADT 数据
+    rawDataRNA_filtered <- rawDataRNA[, cDC1s]
+    rawDataADT_filtered <- rawDataADT[, cDC1s]
+
+    cat("\ncDC1 细胞数量:", length(cDC1s), "\n")
+    cat("RNA 特征数:", nrow(rawDataRNA_filtered), "\n")
+    cat("ADT 特征数:", nrow(rawDataADT_filtered), "\n")
+
+    # 返回过滤后的数据
+    return(list(
+      rawDataRNA = rawDataRNA_filtered,
+      rawDataADT = rawDataADT_filtered,
+      seuratObjcDC1 = seuratObjcDC1,
+      cDC1s = cDC1s
+    ))
+  }
+)
+
+# 提取结果到全局变量
+rawDataRNA <- cdc1_data$rawDataRNA
+rawDataADT <- cdc1_data$rawDataADT
+seuratObjcDC1 <- cdc1_data$seuratObjcDC1
+cDC1s <- cdc1_data$cDC1s
+
+# 清理内存
+rm(cdc1_data)
+gc()
+
+cat("\n✓ cDC1 子集提取完成,已清理内存\n")
+```
+
+#质控
+
+## SCE
+```{r, SCE}
+##### SCE########
+
+library(SingleCellExperiment)
+library(scuttle)
+library(ggplot2)
+library(gridExtra)
+
+# 1. 构建对象 (假设 rawDataRNA 已加载)
+# 建议确保是稀疏矩阵以节省内存
+if(!is(rawDataRNA, "dgCMatrix")) rawDataRNA <- Matrix::Matrix(as.matrix(rawDataRNA), sparse = TRUE)
+sce <- SingleCellExperiment(list(counts=rawDataRNA))
+
+# 2. QC 计算
+is.mito <- grepl("^MT-", rownames(sce), ignore.case = TRUE)
+sce <- addPerCellQC(sce, subsets=list(Mito=is.mito))
+
+# 3. 提取 Metadata (直接利用 colData)
+plot_df <- as.data.frame(colData(sce))
+
+# --- 5. 可视化部分 ---
+
+# A. 小提琴图：查看 QC 指标分布
+p1 <- ggplot(plot_df, aes(x="Sample", y=detected)) + 
+  geom_violin(fill="#56B4E9") + 
+  geom_jitter(size=0.1, alpha=0.2) +
+  theme_classic() +
+  labs(title="Detected Genes per Cell", y="nGene", x="")
+print(p1)
+# ggsave('QC_vln_nGene.png', width=6, height=5)
+
+p2 <- ggplot(plot_df, aes(x="Sample", y=subsets_Mito_percent)) + 
+  geom_violin(fill="#E69F00") + 
+  geom_jitter(size=0.1, alpha=0.2) +
+  theme_classic() +
+  labs(title="Mito Percentage", y="Mito %", x="")
+print(p2)
+# ggsave('QC_vln_Mito.png', width=6, height=5)
+
+# B. 散点图：查看 nUMI 与 Mito % 的相关性（辅助识别死细胞）
+p3 <- ggplot(plot_df, aes(x=sum, y=subsets_Mito_percent)) +
+  geom_point(size=0.5, alpha=0.4, color="darkblue") +
+  theme_minimal() +
+  labs(title="Metadata Correlation", x="Total UMI (nUMI)", y="Mito %")
+print(p3)
+# ggsave('QC_scatter_Mito_vs_UMI.png', width=7, height=5)
+
+# 组合输出
+# grid.arrange(p1, p2, p3, ncol=3)
+```
+
+这三个图表（小提琴图和散点图）是单细胞分析中最核心的**“质控门控”**。解读它们不仅是为了剔除坏细胞，更是为了理解你数据的生物学背景。
+
+下面详细拆解每个指标的深度含义：
+
+---
+
+### 1. nGene (Detected Genes) 小提琴图：细胞复杂性
+
+这个图反映了每个细胞中检测到的**不同基因的数量**。
+
+* **底部长尾（低值区）：** 如果很多细胞落在底部，说明这些是“空滴”（empty droplets）或捕获极差的细胞，它们只含有极少量的 mRNA。
+* **顶部离群点（极高值）：** 如果某些细胞的基因数远高于平均水平，它们很可能是**多细胞（Doublets/Multiplets）**。即两个或多个细胞被错误地封装在了一个液滴里，导致检测到的基因异常丰富。
+* **解读建议：** 观察是否存在“双峰”现象。如果有两个明显的聚集区，可能预示着数据中存在大小差异巨大的两种细胞类型（例如微小的淋巴细胞和巨大的神经元）。
+
+---
+
+### 2. Mito % (Mitochondrial Percentage) 小提琴图：细胞状态
+
+这是判断细胞**存活状态**的金标准。
+
+* **高比例意味着什么：** 当细胞膜破裂或受到挤压、胁迫时，细胞质中的 mRNA 会迅速流失，而由于线粒体较大且被包裹在细胞器内，其 mRNA 往往会被保留下来。因此，线粒体比例异常高（通常 >10% 或 20%）往往代表**正在死亡或已经损坏的细胞**。
+* **生物学偏差：** 注意，某些代谢活跃的组织（如心肌、肾小管、代谢旺盛的肿瘤细胞）本身线粒体含量就高。
+* **解读建议：** 观察分布的“厚度”。如果大部分细胞集中在 5% 以下，只有零星离群点，说明样本制备质量极高。
+
+---
+
+### 3. nUMI vs Mito % 散点图：综合判定
+
+这是最具有实战意义的关联图，用于确定最终的**过滤阈值**。
+
+* **理想细胞区（右下/中下部）：** 这些细胞具有较高的 UMI 计数（测序深度够）和较低的线粒体比例（细胞健康）。这是你后续分析的主力军。
+* **死细胞区（左上部）：** UMI 计数很低但线粒体比例极高。这些细胞应当被毫不犹豫地剔除。
+* **潜在多细胞区（远右侧）：** 线粒体比例正常但 UMI 异常高。虽然它们看起来很“健康”，但它们的数据是两个细胞的叠加，会干扰聚类分析。
+* **解读建议：** 观察这些点的连贯性。如果死细胞区和健康细胞区之间有明显的空隙，说明你的质控门控很容易设定；如果连成一片，则需要根据中位数（例如 Median +/- 3 * MAD）进行更科学的动态过滤。
+
+---
+
+### 专家视角总结表
+
+| 指标 | 异常类型 | 常见过滤策略 |
+| --- | --- | --- |
+| **nGene 过低** | 空滴/碎屑 | 剔除 (如 < 200 - 500) |
+| **nGene 过高** | 多细胞 (Doublets) | 剔除 (如 > 5000 或 结合预测软件) |
+| **Mito % 过高** | 细胞损伤/死亡 | 剔除 (如 人类 > 10%, 小鼠 > 5%) |
+| **UMI vs Mito 相关性** | 异常应激状态 | 寻找离群簇并整体剔除 |
+
+---
+
+**下一步建议：**
+利用 `scuttle` 包自动计算每个样本的异常值边界，这比手动设置 5% 或 10% 的硬门控更符合学术发表的要求。
+
+
+
+## FILTERING
+```{r,FILTERING}
+
+### FILTERING####
+library(SingleCellExperiment)
+library(scuttle)
+library(ggplot2)
+
+# 假设 sce 已经通过 addPerCellQC 计算好了指标
+# 1. 自动计算离群值阈值 (通常定义为超过中位数 3 个 MAD)
+# --------------------------------------------------
+# 1. 定义 QC 过滤参数 (MAD 阈值)
+nmad_low_feature  <- 5     # 低基因数偏离程度
+nmad_high_feature <- 5     # 高基因数偏离程度
+nmad_low_UMI      <- 5     # 低 UMI 数偏离程度
+nmad_high_UMI     <- 5     # 高 UMI 数偏离程度
+nmad_high_mito    <- 10    # 高线粒体比例偏离程度 (通常设置较宽松)
+
+# 2. 执行离群值识别
+# 针对 UMI 总数 (sum) 进行过滤
+# 注意：若高低阈值一致，可直接用 type="both"；若不一致，建议分开计算或取最小值
+outlier_sum <- isOutlier(sce$sum, 
+                         nmads = nmad_low_UMI, 
+                         type = "both", 
+                         log = TRUE)
+
+# 针对检测到的基因数 (detected) 进行过滤
+outlier_detected <- isOutlier(sce$detected, 
+                              nmads = nmad_low_feature, 
+                              type = "both", 
+                              log = TRUE)
+
+# 针对线粒体比例进行过滤 (通常只过滤高值)
+outlier_mito <- isOutlier(sce$subsets_Mito_percent, 
+                          nmads = nmad_high_mito, 
+                          type = "higher")
+
+# 3. 汇总过滤结果
+# 将以上任何一项为 TRUE 的细胞标记为拟丢弃 (discard)
+sce$discard <- outlier_sum | outlier_detected | outlier_mito
+
+# 查看过滤统计
+table(sce$discard)
+
+# 2. 汇总所有的过滤条件
+# --------------------------------------------------
+sce$discard <- outlier_sum | outlier_detected | outlier_mito
+
+# 打印统计结果
+cat("自动化质控统计：\n")
+cat("低 UMI 剔除细胞数:", sum(outlier_sum), "\n")
+cat("低基因数剔除细胞数:", sum(outlier_detected), "\n")
+cat("高线粒体剔除细胞数:", sum(outlier_mito), "\n")
+cat("总计剔除细胞总数:", sum(sce$discard), "\n")
+
+# 3. 提取阈值边界（用于可视化和报告）
+# --------------------------------------------------
+thresholds <- list(
+  sum = attr(outlier_sum, "thresholds")["lower"],
+  detected = attr(outlier_detected, "thresholds")["lower"],
+  mito = attr(outlier_mito, "thresholds")["higher"]
+)
+
+# 4. 可视化：标记出被剔除的细胞
+# --------------------------------------------------
+plot_df <- as.data.frame(colData(sce))
+
+p_auto_qc <- ggplot(plot_df, aes(x = sum, y = subsets_Mito_percent, color = discard)) +
+  geom_point(size = 0.5, alpha = 0.5) +
+  scale_color_manual(values = c("FALSE" = "#21918c", "TRUE" = "#fde725")) +
+  geom_hline(yintercept = thresholds$mito, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = thresholds$sum, linetype = "dashed", color = "red") +
+  theme_minimal() +
+  labs(title = "Adaptive Thresholds (3 MADs)",
+       subtitle = paste0("Mito Limit: ", round(thresholds$mito, 2), "%, UMI Limit: ", round(thresholds$sum, 0)),
+       x = "Total UMI Count", y = "Mitochondrial %",
+       color = "Discarded")
+
+print(p_auto_qc)
+# ggsave('Adaptive_QC_Scatter.png', width=7, height=5)
+
+# 5. 执行过滤，获取干净的对象
+# --------------------------------------------------
+sce_clean <- sce[, !sce$discard]
+
+
+# 6.将 UMI、基因数、线粒体的阈值整合成一个表格
+qc_summary <- rbind(
+  UMI_Threshold = attr(outlier_sum, "thresholds"),
+  Gene_Threshold = attr(outlier_detected, "thresholds"),
+  Mito_Threshold = attr(outlier_mito, "thresholds")
+)
+
+print(qc_summary)
+```
+在单细胞分析中，自动化质控图（Adaptive Thresholds Plot）不仅仅是为了展示剔除了多少细胞，更是为了验证**算法设定的边界是否符合生物学逻辑**。
+
+##以下是对该可视化结果的深度解读指南：
+
+### 1. 象限分析：细胞的“生死符”
+
+通过 X 轴（Total UMI）和 Y 轴（Mito %）的交叉，图表被红线划分为四个逻辑区域：
+
+* **右下角（核心区域）：高 UMI + 低线粒体 —— 【目标细胞】**
+这是最健康的细胞群。它们捕获到了足够的 mRNA 分子，且线粒体比例处于基线水平，代表了研究的主体。
+* **左下角：低 UMI + 低线粒体 —— 【空滴/环境 RNA】**
+这些点被垂直红线（nUMI 阈值）拦截。它们可能是测序深度不够的细胞，或者是捕获了环境游离 RNA 的空液滴。
+* **左上角：低 UMI + 高线粒体 —— 【破碎/死亡细胞】**
+这是最典型的“废弃区”。细胞膜破裂导致胞质 RNA 流失，只剩下线粒体，这些细胞会产生严重的背景噪声，必须剔除。
+* **右上角：高 UMI + 高线粒体 —— 【代谢活跃/应激细胞】**
+这是一个灰色地带。如果这里有很多点被剔除，需要反思：是实验造成的损伤，还是该组织本身代谢极快（如心肌细胞、部分肿瘤核心区）？
+
+---
+
+### 2. 红色虚线（边界线）的统计学意义
+
+自动化质控的核心逻辑是：**“正常细胞应该长得差不多，离群太远的就是错的。”**
+
+* **垂直虚线 (nUMI Threshold)：** 位于 （取 Log 后）。如果这条线太靠右，切到了主细胞群的边缘，说明 `nmads=3` 过于严格，可能会损失珍贵的小细胞类型。
+* **水平虚线 (Mito Threshold)：** 位于 。它捕捉的是该样本中线粒体分布的“天花板”。
+* **优点：** 如果样本整体状态极好（中位数线粒体仅 1%），阈值可能自动设在 3%；如果样本本身制备困难（中位数 5%），阈值可能会放宽到 12%。这比死板的“全统一 5%”更科学。
+
+
+
+---
+
+### 3. 颜色分布（Discard vs. Keep）的质量评估
+
+* **黄色点（Discarded）的连续性：**
+理想情况下，黄色点应该集中在边缘。如果黄色点零散地出现在绿色点（Kept）的中心，说明你的过滤指标可能存在某种**偏差**，或者数据中存在极端的批次效应。
+* **剔除比例：**
+* **< 10%：** 实验质量极佳，样本制备非常成功。
+* **10% - 30%：** 常见范围，属于正常的洗汰。
+* **> 50%：** 预警信号！说明样本制备过程可能存在严重损伤，或者测序深度严重不足，此时得到的分析结果可能无法代表真实生物学状态。
+
+
+
+---
+
+### 4. “排雷”技巧
+
+在解读此图时，请特别注意以下两种异常情况：
+
+1. **“切断了主群”：** 如果你的数据分布是一个完整的大圆球，而红线斜着切掉了圆球的一半，这通常说明数据**不符合正态/对数正态分布**。此时应调大 `nmads`（如设为 5），或者检查是否应该分样本单独计算阈值。
+2. **“多峰分布”：** 如果图中明显有两个绿色中心，但红线只包围了一个，说明你的数据中存在**细胞异质性极强**的情况（比如巨噬细胞和红细胞混在一起）。在这种情况下，建议先进行初步分群，再针对不同类型的细胞分别进行质控。
+
+---
+
+### 总结建议
+
+看这张图时，请问自己一个问题：**“红线剔除的是零散的离群点，还是切掉了一个完整的群体？”**
+
+* 如果是离群点，质控成功。
+* 如果是切掉了一个群体，请重新调整 `isOutlier` 的参数。
+
+**下一步建议：**
+当确定了干净的细胞群体，接下来的关键是**数据标准化（Normalization）**。
+在 `scRNA-seq` 中，传统的 `LogNormalize` 有时会引入伪影。
+目前学界更推荐的 **`scuttle::computePooledFactors`**（分池法）与**`SCTransform`**（正则化负二项回归）。
+
+---
+
+## NORMALIZE: SCRAN/SCATER
+```{r, NORMALIZE: SCRAN/SCATER}
+#### NORMALIZE: SCRAN/SCATER######
+
+# 使用缓存机制进行归一化
+sce_clean <- load_or_compute(
+  cache_file = "03_sce_normalized.rds",
+  description = "Scran 归一化 (quickCluster + computePooledFactors + logNormCounts)",
+  compute_fn = function() {
+    library(scran)
+    library(scuttle)
+
+    # 1.1 快速聚类以辅助分池 (防止跨细胞类型池化导致误差)
+    set.seed(100) # 保证结果可重复
+    cat("  步骤 1/3: quickCluster...\n")
+    quick_clusters <- quickCluster(sce_clean)
+
+    # 1.2 计算分池尺寸因子
+    cat("  步骤 2/3: computePooledFactors...\n")
+    sce_clean <- computePooledFactors(sce_clean, clusters = quick_clusters)
+
+    # 1.3 应用归一化：生成 logcounts 矩阵
+    cat("  步骤 3/3: logNormCounts...\n")
+    sce_clean <- logNormCounts(sce_clean)
+
+    # 检查 Size Factors 分布
+    cat("\nSize Factors 统计:\n")
+    print(summary(sizeFactors(sce_clean)))
+
+    return(sce_clean)
+  }
+)
+
+# 同步原始矩阵，为后续转 Seurat 或存证做准备
+rawDataFiltered <- rawDataRNA[rownames(sce_clean), colnames(sce_clean)]
+
+cat("\n✓ 归一化完成\n")
+cat("  细胞数:", ncol(sce_clean), "\n")
+cat("  基因数:", nrow(sce_clean), "\n")
+
+### ------------------ ###
+```
+##选择**高变基因（Highly Variable Genes, HVGs）**
+```{r,选择高变基因}
+##选择**高变基因（Highly Variable Genes, HVGs）**
+library(scran)
+
+# 1. 建模基因方差
+# 它会根据均值-方差趋势，计算每个基因的生物方差贡献
+dec <- modelGeneVar(sce_clean)
+
+# 可视化均值-方差趋势图
+plot(dec$mean, dec$total, xlab="Mean log-expression", ylab="Variance")
+curve(metadata(dec)$trend(x), add=TRUE, col="blue", lwd=2)
+
+# 2. 选择前 2000 个高变基因
+top_hvgs <- getTopHVGs(dec, n=2000)
+
+# 3. 将 HVGs 信息存入对象，后续 PCA 会默认读取
+rowSubset(sce_clean) <- top_hvgs
+```
+
+
+
+
+##CREATE SEURAT OBJECT######
+```{r, CREATE SEURAT OBJECTCREATE SEURAT OBJECT}
+#########CREATE SEURAT OBJECT######
+
+# 使用缓存机制创建并处理 Seurat 对象
+seurat_obj <- load_or_compute(
+  cache_file = "04_seurat_sct_clustered.rds",
+  description = "Seurat 对象创建 + SCTransform + PCA + UMAP + tSNE + 聚类",
+  compute_fn = function() {
+    library(Seurat)
+    library(SingleCellExperiment)
+    library(ggplot2)
+
+    # 1. 创建基础 Seurat 对象
+    cat("  步骤 1/7: 创建 Seurat 对象...\n")
+    seurat_obj <- CreateSeuratObject(counts = rawDataFiltered, project = "Scran_SCT_Integration")
+
+    # 2. 注入 scran 的 logcounts
+    cat("  步骤 2/7: 注入 scran logcounts...\n")
+    scran_logcounts <- logcounts(sce_clean)
+    seurat_obj[["RNA"]]$data <- as(scran_logcounts, "dgCMatrix")
+    seurat_obj$percent.mito <- sce_clean$subsets_Mito_percent
+
+    # 3. 运行 SCTransform (最耗时的步骤!)
+    cat("  步骤 3/7: 运行 SCTransform (这将需要几分钟)...\n")
+    seurat_obj <- SCTransform(seurat_obj,
+                             assay = "RNA",
+                             new.assay.name = "SCT",
+                             vars.to.regress = "percent.mito",
+                             verbose = FALSE)
+
+    # 4. 运行 PCA
+    cat("  步骤 4/7: 运行 PCA...\n")
+    seurat_obj <- RunPCA(seurat_obj, assay = "SCT", verbose = FALSE)
+
+    # 5. 运行 UMAP
+    cat("  步骤 5/7: 运行 UMAP...\n")
+    seurat_obj <- RunUMAP(seurat_obj, dims = 1:25, reduction = "pca", verbose = FALSE)
+
+    # 6. 运行 tSNE
+    cat("  步骤 6/7: 运行 tSNE...\n")
+    seurat_obj <- RunTSNE(seurat_obj,
+                          dims = 1:25,
+                          reduction = "pca",
+                          reduction.name = "tsne",
+                          reduction.key = "tSNE_",
+                          perplexity = 30)
+
+    # 7. 聚类分析
+    cat("  步骤 7/7: 聚类分析...\n")
+    seurat_obj <- FindNeighbors(seurat_obj,
+                               dims = 1:25,
+                               reduction = "pca",
+                               graph.name = c("sct_nn", "sct_snn"))
+
+    seurat_obj <- FindClusters(seurat_obj,
+                              graph.name = "sct_snn",
+                              resolution = 0.8)
+
+    return(seurat_obj)
+  }
+)
+
+# --- 可视化部分 ---
+
+# A. 聚类结果展示
+p1 <- DimPlot(seurat_obj, reduction = "umap", label = TRUE) +
+  labs(title = "Clustering based on SCT")
+print(p1)
+
+# B. 气泡图 (展示标志基因)
+DefaultAssay(seurat_obj) <- "RNA"
+markers_to_plot <- c("Ccr7", "Cd3e", "Cd14", "Ms4a1")
+p2 <- DotPlot(seurat_obj, features = markers_to_plot, assay = "RNA") +
+  coord_flip() +
+  labs(title = "Marker Expression (scran LogCounts)")
+print(p2)
+
+# C. tSNE 图
+p_tsne <- DimPlot(seurat_obj, reduction = "tsne", label = TRUE) +
+  labs(title = paste0("tSNE (Used Dims: 1-25)")) +
+  theme_minimal()
+print(p_tsne)
+
+# D. Elbow plot
+print(ElbowPlot(seurat_obj, ndims = 50))
+
+cat("\n✓ Seurat 对象创建和降维完成\n")
+cat("  聚类数:", length(unique(Idents(seurat_obj))), "\n")
+
+```
+
+
+
+#剔除双细胞 runDoubletFinder
+## 定义runDoubletFinder函数
+```{r,定义runDoubletFinder函数}
+runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cluster_col = NULL) {
+  require(dplyr)
+  require(ggplot2)
+  require(patchwork)
+  require(Seurat)
+  
+  # ----------------------------
+  # 1) 动态环境自适应与 Seurat v5 适配
+  # ----------------------------
+  # 如果是 Seurat v5 对象，建议先合并 Layers，防止 DoubletFinder 处理出错
+  if (is(object, "Seurat") && !is.null(object[["RNA"]]) && is(object[["RNA"]], "Assay5")) {
+    message(">>> 检测到 Seurat v5 对象，正在执行 JoinLayers...")
+    object <- JoinLayers(object)
+  }
+
+  df_ns <- asNamespace("DoubletFinder")
+  param_fun <- if (exists("paramSweep_v3", envir = df_ns)) get("paramSweep_v3", envir = df_ns) else get("paramSweep", envir = df_ns)
+  sum_fun   <- get("summarizeSweep", envir = df_ns)
+  pk_fun    <- get("find.pK", envir = df_ns)
+  df_main_fun <- if (exists("doubletFinder_v3", envir = df_ns)) get("doubletFinder_v3", envir = df_ns) else get("doubletFinder", envir = df_ns)
+
+  # ----------------------------
+  # 2) 线粒体检测
+  # ----------------------------
+  if (!"percent.mito" %in% colnames(object@meta.data)) {
+    object[["percent.mito"]] <- PercentageFeatureSet(object, pattern = "^MT-|^mt-|^Mt-")
+  }
+
+  # ----------------------------
+  # 3) 参数寻优 (pK)
+  # ----------------------------
+  is_sct <- "SCT" %in% SeuratObject::Assays(object)
+  if (length(PCs) == 1) PCs <- 1:PCs
+  
+  sweep.res <- param_fun(object, PCs = PCs, sct = is_sct)
+  sweep.stats <- sum_fun(sweep.res, GT = FALSE)
+  bcmvn <- pk_fun(sweep.stats)
+  
+  # 提取最佳 pK 并生成可视化图表
+  pKValue_char <- as.character(bcmvn$pK[which.max(bcmvn$BCmetric)])
+  pKValue <- as.numeric(pKValue_char)
+  message(">>> 选定最佳 pK: ", pKValue)
+  
+  # 修复：定义 p_pk 变量供后续绘图使用
+  # 注意：DoubletFinder 官方没有直接返回 ggplot 对象的函数，这里手动创建一个简单的图
+  p_pk <- ggplot(bcmvn, aes(x = as.numeric(as.character(pK)), y = BCmetric)) +
+    geom_line() + geom_point() +
+    geom_vline(xintercept = pKValue, color = "red", linetype = "dashed") +
+    labs(title = "Step 1: pK Selection", x = "pK", y = "BCmetric") +
+    theme_minimal()
+
+  # ----------------------------
+  # 4) 同型校正
+  # ----------------------------
+  if (is.null(cluster_col)) {
+    possible_cols <- grep("clusters|res|seurat_clusters", colnames(object@meta.data), value = TRUE)
+    if (length(possible_cols) > 0) cluster_col <- possible_cols[1]
+  }
+  
+  homotypic.prop <- 0
+  if (!is.null(cluster_col) && cluster_col %in% colnames(object@meta.data)) {
+    cluster_vec <- as.character(object@meta.data[[cluster_col]])
+    # 确保 modelHomotypic 可用
+    if (exists("modelHomotypic", envir = df_ns)) {
+      model_homo_fun <- get("modelHomotypic", envir = df_ns)
+      homotypic.prop <- model_homo_fun(cluster_vec)
+      message(">>> 检测到 Cluster 列: ", cluster_col, ", 同型比例: ", round(homotypic.prop, 4))
+    }
+  }
+
+  # ----------------------------
+  # 5) 核心计算
+  # ----------------------------
+  nCells <- ncol(object)
+  nExp_poi <- round(c(minPCT/100, (minPCT/100)*(1-homotypic.prop), 
+                      maxPCT/100, (maxPCT/100)*(1-homotypic.prop)) * nCells)
+  names(nExp_poi) <- c("min", "min_adj", "max", "max_adj")
+
+  # 第一轮：生成 pANN
+  # 关键修复：将 reuse.pANN = FALSE 改为 reuse.pANN = NULL，解决 "cannot xtfrm data frames" 错误
+  object <- df_main_fun(object, pN = pN, pK = pKValue, nExp = nExp_poi["min"], 
+                        reuse.pANN = NULL, PCs = PCs, sct = is_sct)
+  
+  all_pann_cols <- grep("^pANN_", colnames(object@meta.data), value = TRUE)
+  pann_col <- all_pann_cols[length(all_pann_cols)] 
+
+  # 后续轮：复用 pANN
+  unique_nExps <- unique(nExp_poi[-1])
+  for (n in unique_nExps) {
+    object <- df_main_fun(object, pN = pN, pK = pKValue, nExp = n, 
+                          reuse.pANN = pann_col, PCs = PCs, sct = is_sct)
+  }
+
+  # ----------------------------
+  # 6) 标签清洗
+  # ----------------------------
+  safe_get_df_col <- function(n) {
+    col <- grep(paste0("DF.classifications_.*_", n, "$"), colnames(object@meta.data), value = TRUE)
+    if (length(col) == 0) return(NA)
+    return(col[length(col)])
+  }
+  
+  object$DFPrediction <- "Singlet"
+  
+  col_max_adj <- safe_get_df_col(nExp_poi["max_adj"])
+  col_max     <- safe_get_df_col(nExp_poi["max"])
+  col_min_adj <- safe_get_df_col(nExp_poi["min_adj"])
+  col_min     <- safe_get_df_col(nExp_poi["min"])
+
+  if (!is.na(col_max)) object$DFPrediction[object@meta.data[[col_max]] == "Doublet"] <- "Low Confidence"
+  if (!is.na(col_max_adj)) object$DFPrediction[object@meta.data[[col_max_adj]] == "Doublet"] <- "Low Confidence adjusted"
+  if (!is.na(col_min)) object$DFPrediction[object@meta.data[[col_min]] == "Doublet"] <- "High Confidence"
+  if (!is.na(col_min_adj)) object$DFPrediction[object@meta.data[[col_min_adj]] == "Doublet"] <- "High Confidence adjusted"
+
+  # ----------------------------
+  # 7) 可视化
+  # ----------------------------
+  doublet_cols <- c(
+    "High Confidence"          = "#E41A1C", 
+    "High Confidence adjusted" = "#FB9A99", 
+    "Low Confidence"           = "#33A02C", 
+    "Low Confidence adjusted"  = "#B2DF8A", 
+    "Singlet"                  = "#E6E6E6"
+  )
+
+  p_umap <- DimPlot(object, group.by = "DFPrediction") + 
+    scale_color_manual(values = doublet_cols, na.value = "grey90") + 
+    labs(title = "Step 2: Doublet Spatial Distribution")
+
+  p_qc <- FeatureScatter(object, feature1 = "nCount_RNA", feature2 = "percent.mito", group.by = "DFPrediction") + 
+    scale_color_manual(values = doublet_cols, na.value = "grey90") + 
+    NoLegend() + 
+    labs(title = "Step 3: QC Verification")
+
+  # 打印综合报告
+  print(p_pk + p_umap + p_qc + plot_layout(ncol = 2))
+  
+  return(object)
+}
+
+```
+
+##执行双细胞检测与删除
+```{r, 执行双细胞检测, message=FALSE}
+
+# 使用缓存机制进行双细胞检测
+doublet_result <- load_or_compute(
+  cache_file = "05_doublet_detected.rds",
+  description = "DoubletFinder 检测 (参数扫描 + 分类)",
+  compute_fn = function() {
+    cat("  这是最耗时的步骤之一,可能需要 10-20 分钟...\n")
+
+    # 运行双细胞检测
+    seurat_obj_with_doublets <- runDoubletFinder(seurat_obj, PCs = 1:25, minPCT = 1, maxPCT = 15, pN = 0.25)
+
+    return(seurat_obj_with_doublets)
+  }
+)
+
+# 更新 seurat_obj
+seurat_obj <- doublet_result
+
+# 清理元数据 (移除中间列)
+seurat_obj@meta.data <- seurat_obj@meta.data[, !grepl("pANN|DF.classifications", colnames(seurat_obj@meta.data))]
+
+# 检查结果
+cat("\n双细胞检测结果:\n")
+print(table(as.character(seurat_obj$DFPrediction)))
+
+# 过滤双细胞
+seurat_obj_clean <- subset(seurat_obj, subset = as.character(DFPrediction) %in% c("Singlet", "Low Confidence", "Low Confidence adjusted"))
+
+cat("\n✓ 双细胞过滤完成\n")
+cat("  过滤前:", ncol(seurat_obj), "个细胞\n")
+cat("  过滤后:", ncol(seurat_obj_clean), "个细胞\n")
+cat("  移除:", ncol(seurat_obj) - ncol(seurat_obj_clean), "个双细胞\n")
+
+# 清理内存
+rm(doublet_result)
+gc()
+
+```
+
+## 剔除双细胞前后效果图
+剔除双细胞后，需要重新运行降维以观察真实的拓扑变化
+如果只是在旧图上隐藏点，看不到“由于噪音消失带来的群分离”效果
+```{r, 剔除双细胞前后效果图}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+
+# --- 绘制对比图 ---
+
+# A. 原始全图：高亮显示即将被剔除的双细胞
+p1 <- DimPlot(seurat_obj, group.by = "DFPrediction", 
+              cols = c("High Confidence" = "#E41A1C", 
+                       "High Confidence adjusted" = "#FB9A99", 
+                       "Low Confidence" = "#33A02C", 
+                       "Low Confidence adjusted" = "#B2DF8A", 
+                       "Singlet" = "#E6E6E6")) + 
+  labs(title = "Before: Original UMAP (Doublets Highlighted)", 
+       subtitle = paste0("Total Cells: ", ncol(seurat_obj))) +
+  theme(legend.position = "bottom")
+
+
+#B. 清理后的图：展示纯净的细胞分群
+## 继承原始坐标（位置完全一致）
+# 1. 直接从原始对象中提取 Singlet，它会自动保留原有的 UMAP 坐标（上面已运行）
+#seurat_obj_clean <- subset(seurat_obj, subset = as.character(DFPrediction) %in% c("Singlet", "Low Confidence", "Low Confidence adjusted"))
+# 
+seurat_obj_clean <- subset(seurat_obj, subset = DFPrediction == "Singlet")
+# 2. 重新寻找高变基因和缩放 (针对清洗后的数据)
+seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean)
+seurat_obj_clean <- ScaleData(seurat_obj_clean)
+
+# 3. 重新跑 PCA 和 聚类 (为了得到更纯净的分群)
+# 注意：不要重新跑 RunUMAP！！
+#seurat_obj_clean <- RunUMAP(seurat_obj_clean, dims = 1:25)
+seurat_obj_clean <- RunPCA(seurat_obj_clean, verbose = FALSE)
+seurat_obj_clean <- FindNeighbors(seurat_obj_clean, dims = 1:25)
+seurat_obj_clean <- FindClusters(seurat_obj_clean, resolution = 0.5)
+
+# --- 绘制对比图 ---
+# 此时 p2 使用的是原图的坐标，但着色是基于“清理后”的数据重新聚类的结果
+p2 <- DimPlot(seurat_obj_clean, reduction = "umap", group.by = "seurat_clusters", label = TRUE) + 
+  labs(title = "After: Cleaned (Original Layout)", 
+       subtitle = paste0("Singlets only: ", ncol(seurat_obj_clean))) +
+  theme(legend.position = "none")
+print(p2)
+comparison_plot <- p1 + p2 + plot_layout(ncol = 2)
+print(comparison_plot)
+print(p1 + p2 )
+
+
+#################
+# B. 清理后的图：展示纯净的细胞分群
+# p2 <- DimPlot(seurat_obj_clean, group.by = "seurat_clusters", label = TRUE) + 
+#   labs(title = "After: Cleaned UMAP (Singlets Only)", 
+#        subtitle = paste0("Remaining Cells: ", ncol(seurat_obj_clean))) +
+#   theme(legend.position = "none")
+
+# --- 3. 组合输出 ---
+# 使用 patchwork 将两张图并排显示
+#comparison_plot <- p1 + p2 + plot_layout(ncol = 2)
+
+#print(comparison_plot)
+# ggsave('Doublet_Removal_Comparison.png', width = 14, height = 7)
+```
+
+
+#差异基因分析
+```{r,DEG分析}
+
+# 设置细胞身份
+Idents(object = seurat_obj_clean) <- 'seurat_clusters'
+cat("当前聚类身份:\n")
+print(head(Idents(seurat_obj_clean)))
+
+# 使用缓存机制进行差异基因分析
+exp.markers <- load_or_compute(
+  cache_file = "06_deg_markers_rna.rds",
+  description = "差异基因分析 (FindAllMarkers on SCT)",
+  compute_fn = function() {
+    cat("  这可能需要 5-15 分钟,取决于细胞数量...\n")
+
+    # 运行差异表达分析
+    markers <- FindAllMarkers(seurat_obj_clean,
+                             assay = "SCT",
+                             slot = "data",
+                             verbose = TRUE)
+
+    cat("\n  找到", nrow(markers), "个差异表达基因\n")
+    return(markers)
+  }
+)
+
+# 筛选并保存最具代表性的基因
+library(dplyr)
+
+# 提取每个 Cluster 的 Top 5 基因（按 log2FC 降序排列）
+top5_markers <- exp.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+
+cat("\nTop 5 Marker Genes per Cluster:\n")
+print(top5_markers)
+
+# 保存差异基因列表
+final_path <- file.path(output.dir, "Files", paste0("All_Markers_by_Cluster_", project_name, ".csv"))
+
+if (!dir.exists(dirname(final_path))) {
+  dir.create(dirname(final_path), recursive = TRUE)
+}
+
+write.csv(exp.markers, file = final_path, row.names = FALSE)
+cat("\n✓ 差异基因列表已保存至:", final_path, "\n")
+
+```
+
+
+##差异基因可视化
+1. 气泡图 (DotPlot) —— 最推荐的全局视图
+它可以同时展示基因的表达强度（颜色深浅）和表达比例（圆点大小）。
+```{r}
+# 选取每个群的前 3 个基因进行展示
+library(RColorBrewer) # 加载颜色包
+genes_to_plot <- unique(top5_markers$gene[1:15]) # 视群数量调整数量
+
+DotPlot(seurat_obj_clean, features = genes_to_plot, assay = "SCT") + 
+    RotatedAxis() + 
+    scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
+    labs(title = "Top Markers Expression across Clusters")
+```
+
+2. 热图 (DoHeatmap) —— 论文必备
+热图能非常清晰地展示细胞群之间的界限
+```{r}
+
+# 注意：ScaleData 必须包含这些基因才能画热图
+# 如果之前只 scale 了 HVGs，这里可能需要重新 Scale 一下选中的基因
+seurat_obj_clean <- ScaleData(seurat_obj_clean, features = top5_markers$gene)
+
+DoHeatmap(seurat_obj_clean, features = top5_markers$gene) + 
+    NoLegend() + 
+    scale_fill_gradientn(colors = c("blue", "white", "red"))
+```
+3. 特征分布图 (FeaturePlot) —— 验证关键 Marker
+如果你心中已经有几个“明星基因”（比如 Xcr1 或 Clec9a），用这个图把它们投射到 UMAP 上。
+```{r}
+# 看看 cDC1 的关键标记在哪个位置
+# 强制指定降维方式为 "umap"
+FeaturePlot(seurat_obj_clean, 
+            features = c("Xcr1", "Clec9a", "Itgae","Ccr7","Nr4a3","Cebpb"), 
+            reduction = "umap", # 关键参数
+            ncol = 2)
+```
+
+
+#cDC1_RNA数据保存
+```{r}
+# --- 1. 定义保存路径 ---
+# 建议在 results 下创建 Robjects 文件夹专门存放数据
+robject_dir <- paste0(output.dir, "Robjects/")
+
+if (!dir.exists(robject_dir)) {
+  dir.create(robject_dir, recursive = TRUE)
+}
+
+# --- 2. 保存清理后的 Seurat 对象 ---
+# 文件名建议带上项目名和状态（如 clean_normalized）
+saveRDS(seurat_obj_clean, 
+        file = paste0(robject_dir, "seurat_obj_clean_cDC1_RNA.rds"))
+
+# --- 3. 保存差异表达基因表 ---
+saveRDS(exp.markers, 
+        file = paste0(robject_dir, "exp_markers_SCT.rds"))
+
+message("数据已成功保存至: ", robject_dir)
+```
+
+###########
+#ADT
+```{r, ADT COUNT DATA}
+rawDataADT <- rawData$`Antibody Capture`
+raw.names <- rownames(rawDataADT)                 # 抗体名称（ADT features）
+cells.use  <- intersect(colnames(rawDataADT), colnames(seurat_obj_clean))
+# ↑ 取 ADT 与 seurat_obj_clean 共同拥有的细胞条形码（保证对齐）
+ABS.use  <- rownames(rawDataADT)                  # 要用的抗体（这里等于全部）
+rawDataADT <- rawDataADT[ABS.use, cells.use]      # 按共同细胞截取 ADT 矩阵
+
+seurat_obj_clean[["ADT"]] <- CreateAssayObject(counts = rawDataADT[,colnames(seurat_obj_clean)])
+# ↑ 把 ADT assay 加到同一个 Seurat 对象
+# [注] 这里再次用 colnames(seurat_obj_clean) 排序，确保 ADT 列顺序与对象细胞顺序一致
+# CLR transformation
+seurat_obj_clean <- NormalizeData(seurat_obj_clean, assay = "ADT", normalization.method = "CLR", verbose=T)
+# ↑ ADT 常用 CLR（centered log-ratio）归一化（按细胞做“相对丰度”标准化）
+
+# Informative Antibodies
+seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean,assay="ADT",selection.method = "vst", nfeatures=nrow(rawDataADT))
+# ↑ 把所有抗体都作为“可变特征”（nfeatures = 抗体总数）
+HVABs <- VariableFeatures(seurat_obj_clean, assay = "ADT")   # 取出被选为可变的抗体（通常就是全部）
+
+# SCALING & PCA
+seurat_obj_clean <- ScaleData(seurat_obj_clean, assay = "ADT")      # 标准化 ADT 表达（每个抗体中心化/标准化）
+seurat_obj_clean <- RunPCA(object = seurat_obj_clean, assay = "ADT",
+                    features = VariableFeatures(seurat_obj_clean, assay = "ADT"),
+                    npcs = nrow(rawDataADT), ndims.print = 1:5, nfeatures.print = 10,
+                    reduction.name = "ADT_pca",reduction.key = "adtPC_")
+# ↑ 在 ADT assay 上跑 PCA：PC 数设为抗体总数（一般也可设小些）
+
+# Find clusters
+seurat_obj_clean <- FindNeighbors(object = seurat_obj_clean, reduction = "ADT_pca", dims = dimsToUse)
+# ↑ 用 ADT_pca 前 dimsToUse 个 PC 建图
+seurat_obj_clean <- FindClusters(object = seurat_obj_clean,  graph.name = "ADT_snn", resolution = resToUse)
+# ↑ 在 ADT_snn 图上聚类
+# [潜在问题] 同 RNA：graph.name 是否真叫 "ADT_snn" 不一定；且这里也没显式创建 ADT_clusters 列
+
+# tSNE
+seurat_obj_clean <- RunTSNE(object = seurat_obj_clean, dims = dimsToUse, assay = "ADT", reduction = "ADT_pca",
+                     reduction.name = "ADT_tsne", reduction.key = "adtTSNE_")
+# ↑ ADT 的 tSNE
+
+# UMAP
+seurat_obj_clean <- RunUMAP(seurat_obj_clean, dims =1: dimsToUse, n_neighbors = 30, assay = "ADT", reduction ="ADT_pca",
+                     reduction.name = "ADT_umap", reduction.key = "adtUMAP_")
+# ↑ ADT 的 UMAP
+
+# DEG
+Idents(object = seurat_obj_clean) <- 'ADT_clusters'
+# ↑ 切换 ident 到 ADT_clusters
+# [潜在问题] ADT_clusters 在脚本中并未生成；通常 FindClusters 生成的是 seurat_clusters 或 graph_res.* 列
+# [建议修正] FindClusters 后加：seurat_obj_clean$ADT_clusters <- Idents(seurat_obj_clean)
+
+exp.markers <- FindAllMarkers(seurat_obj_clean,assay="ADT")
+# ↑ 基于 ADT assay 找每个 cluster 的差异抗体（marker 抗体）
+
+saveRDS(seurat_obj_clean, file = paste0(output.dir,"Robjects/seurat_obj_clean_",project_name,"_ADT.rds"))
+# ↑ 保存包含 ADT 分析结果的 Seurat 对象（注意：这是同一个对象，包含 RNA+ADT+多套降维/聚类）
+saveRDS(exp.markers, file=paste0(output.dir,"Robjects/ExpressionMarkers_",project_name, "_ADT.rds"))
+
+```
+
+
+
+
+# ADT_RNA数据集成与WNN融合分析
+```{r}
+
+# 使用缓存机制进行 WNN 多模态融合分析
+seurat_obj_clean <- load_or_compute(
+  cache_file = "07_wnn_multimodal_integrated.rds",
+  description = "WNN 多模态融合 (ADT处理 + 融合 + 聚类)",
+  compute_fn = function() {
+    cat("  步骤 1/8: 提取并对齐 ADT 矩阵...\n")
+    # 提取并对齐 ADT 矩阵
+    raw_adt_matrix <- as.matrix(rawData$`Antibody Capture`)
+    common_cells   <- intersect(colnames(raw_adt_matrix), colnames(seurat_obj_clean))
+
+    # 添加 ADT Assay
+    seurat_obj_clean[["ADT"]] <- CreateAssayObject(counts = raw_adt_matrix[, colnames(seurat_obj_clean)])
+
+    # ADT 预处理
+    cat("  步骤 2/8: ADT 归一化和降维...\n")
+    seurat_obj_clean <- NormalizeData(seurat_obj_clean, assay = "ADT", normalization.method = "CLR", margin = 2)
+    seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean, assay = "ADT", nfeatures = nrow(seurat_obj_clean[["ADT"]]))
+    seurat_obj_clean <- ScaleData(seurat_obj_clean, assay = "ADT")
+    seurat_obj_clean <- RunPCA(seurat_obj_clean, assay = "ADT", reduction.name = "adt_pca", reduction.key = "adtPC_", verbose = FALSE)
+
+    # ADT 驱动的降维与聚类
+    cat("  步骤 3/8: ADT 驱动的聚类...\n")
+    seurat_obj_clean <- FindNeighbors(seurat_obj_clean, reduction = "adt_pca", dims = 1:20, graph.name = "adt_snn")
+    seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "adt_snn", resolution = 0.8, verbose = FALSE)
+    seurat_obj_clean$ADT_clusters <- Idents(seurat_obj_clean)
+    seurat_obj_clean <- RunUMAP(seurat_obj_clean, reduction = "adt_pca", dims = 1:15,
+                                 reduction.name = "adt_umap", reduction.key = "adtUMAP_", verbose = FALSE)
+
+    # SCT (RNA) 驱动的聚类
+    cat("  步骤 4/8: RNA 驱动的聚类...\n")
+    seurat_obj_clean <- FindNeighbors(seurat_obj_clean, reduction = "pca", dims = 1:25, graph.name = "sct_snn")
+    seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "sct_snn", resolution = 0.6, verbose = FALSE)
+    seurat_obj_clean$SCT_clusters <- Idents(seurat_obj_clean)
+
+    # WNN 多模态融合
+    cat("  步骤 5/8: 计算 WNN 权重 (这可能需要几分钟)...\n")
+    seurat_obj_clean <- FindMultiModalNeighbors(
+      seurat_obj_clean,
+      reduction.list = list("pca", "adt_pca"),
+      dims.list = list(1:25, 1:20),
+      modality.weight.name = "WNN_weight"
+    )
+
+    cat("  步骤 6/8: 运行 WNN UMAP...\n")
+    seurat_obj_clean <- RunUMAP(seurat_obj_clean,
+                                 nn.name = "weighted.nn",
+                                 reduction.name = "wnn_umap",
+                                 reduction.key = "wnnUMAP_",
+                                 verbose = FALSE)
+
+    cat("  步骤 7/8: WNN 聚类...\n")
+    seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "wsnn", resolution = 0.4, verbose = FALSE)
+    seurat_obj_clean$WNN_clusters <- Idents(seurat_obj_clean)
+
+    cat("  步骤 8/8: 完成!\n")
+    return(seurat_obj_clean)
+  }
+)
+
+# 差异表达分析 (基于 WNN 聚类结果)
+Idents(seurat_obj_clean) <- "WNN_clusters"
+DefaultAssay(seurat_obj_clean) <- "SCT"
+
+# 使用缓存进行 WNN 差异基因分析
+exp.markers <- load_or_compute(
+  cache_file = "08_deg_markers_wnn.rds",
+  description = "WNN 差异基因分析 (基于多模态聚类)",
+  compute_fn = function() {
+    markers <- FindAllMarkers(seurat_obj_clean, assay = "SCT", slot = "data", only.pos = TRUE, verbose = TRUE)
+    cat("\n  找到", nrow(markers), "个差异表达基因\n")
+    return(markers)
+  }
+)
+
+dir.create(paste0(output.dir, "Files"), recursive = TRUE, showWarnings = FALSE)
+write.csv(exp.markers, file = paste0(output.dir, "Files/All_Markers_by_Cluster_WNN.csv"))
+cat("\n✓ WNN 差异基因列表已保存\n")
+
+# ==========================================
+# 5. 可视化增强 (多维对比)
+# ==========================================
+
+# A. 三种驱动方式的横向对比
+p_adt <- DimPlot(seurat_obj_clean, reduction = "adt_umap", group.by = "ADT_clusters", label = TRUE) + ggtitle("ADT-driven")
+p_rna <- DimPlot(seurat_obj_clean, reduction = "umap", group.by = "SCT_clusters", label = TRUE) + ggtitle("RNA-driven")
+p_wnn <- DimPlot(seurat_obj_clean, reduction = "wnn_umap", group.by = "WNN_clusters", label = TRUE) + ggtitle("WNN-combined")
+
+print(p_adt + p_rna + p_wnn)
+
+# B. 基因 vs 蛋白 局部调用 (基于 WNN 坐标)
+# 修改后的代码：使用 cols 参数简单直接
+p_comp <- FeaturePlot(seurat_obj_clean, 
+                      features = c("Ccr7", "adt_CD197"), 
+                      reduction = "wnn_umap", 
+                      ncol = 2,
+                      cols = c("lightgrey", "#DE2D26")) # 浅灰到亮红
+
+print(p_comp)
+
+# C. WNN 权重分布可视化 (查看细胞对蛋白质信号的依赖度)
+#p_weight <- VlnPlot(seurat_obj_clean, features = "WNN_weight.ADT", group.by = "WNN_clusters") + 
+            ggtitle("Protein Modality Weight by Cluster")
+print(p_weight)
+# 关键改动：将 "WNN_weight.ADT" 改为 "ADT.weight"
+p_weight <- VlnPlot(seurat_obj_clean, 
+                    features = "ADT.weight", 
+                    group.by = "WNN_clusters", 
+                    pt.size = 0) + 
+            ggtitle("Protein Modality Weight by Cluster") +
+            theme(legend.position = "none")
+
+print(p_weight)
+
+#自定义基因气泡图 (DotPlot)
+# --- 1. 定义您确定的基因列表 ---
+# 请在此处输入您想要展示的基因
+my_custom_genes <- c("Xcr1", "Clec9a", "Itgae", "Id2", "Batf3", "Irf8", "Ccr7","Cd274", "Nr4a3","Sirpa","Cd24a","Notch2")
+
+# --- 2. 绘制气泡图 ---
+p_dot <- DotPlot(
+  seurat_obj_clean, 
+  features = my_custom_genes, 
+  assay = "SCT",                # 局部调用 SCT 数据
+  group.by = "WNN_clusters"     # 按 WNN 聚类分组
+) + 
+  # 使用您最喜欢的 RdYlBu 色板 (反转后：蓝->黄->红)
+  scale_colour_gradientn(colours = rev(RColorBrewer::brewer.pal(n = 11, name = "RdYlBu"))) + 
+  RotatedAxis() +               # 旋转 X 轴标签
+  theme_bw() +                  # 【关键】将背景设为纯白，解决背景深的问题
+  theme(
+    panel.grid.major = element_line(colour = "grey95"), # 使用极浅的网格线
+    axis.text.x = element_text(face = "italic", size = 10),
+    axis.title = element_blank()
+  ) +
+  labs(title = "Custom Markers Expression (WNN Clusters)")
+
+# --- 3. 显示图片 ---
+print(p_dot)
+
+
+
+# ==========================================
+# 6. 注释与保存
+# ==========================================
+
+# 目标对齐文献 6 群 (基于 WNN 结果)
+# existing_idents <- c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s", 
+#                      "Late immature cDC1s", "Early mature cDC1s", "Late mature cDC1s")
+# 
+# if(length(levels(seurat_obj_clean)) == length(existing_idents)) {
+#     names(existing_idents) <- levels(seurat_obj_clean)
+#     seurat_obj_clean <- RenameIdents(seurat_obj_clean, existing_idents)
+#     seurat_obj_clean$cell_type <- Idents(seurat_obj_clean)
+# }
+
+saveRDS(seurat_obj_clean, file = paste0(output.dir, "Robjects/seurat_obj_WNN_final.rds"))
+```
+
+
+
+
+##一键式多组学 QC 报告
+这段代码将利用你刚生成的 wnn_umap 坐标系，对比展示转录组（RNA）和蛋白质（ADT）的质量分布，以及 WNN 算法为每个细胞分配的权重。
+```{r}
+library(Seurat)
+library(ggplot2)
+library(patchwork)
+library(viridis)
+
+# ==========================================
+# 1. 准备 QC 特征列表
+# ==========================================
+# RNA 指标：基因数、UMI 总数
+# ADT 指标：蛋白 UMI 总数
+# WNN 指标：RNA 权重 (SCT 权重)
+qc_features <- c("nFeature_SCT", "nCount_SCT", "nCount_ADT", "WNN_weight.SCT")
+
+# ==========================================
+# 2. 空间分布 QC (基于 WNN UMAP)
+# ==========================================
+# 在融合坐标系下查看质量指标，检查是否有某些群是因为质量差才聚在一起的
+p_spatial_qc <- FeaturePlot(
+  seurat_obj_clean, 
+  features = qc_features, 
+  reduction = "wnn_umap", 
+  ncol = 2,
+  cols = viridis(100) # 使用高对比度颜色
+) & theme(plot.title = element_text(size = 10))
+
+# ==========================================
+# 3. 分群质量对比 (小提琴图)
+# ==========================================
+# 检查各个 cDC1 亚群之间的质量差异和权重分布
+p_vln_qc <- VlnPlot(
+  seurat_obj_clean, 
+  features = qc_features, 
+  group.by = "WNN_clusters", 
+  pt.size = 0, # 不显示散点，画面更干净
+  ncol = 2
+) & theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# ==========================================
+# 4. ADT 信号特异性检查 (RidgePlot)
+# ==========================================
+# 选取几个关键抗体，检查其在 WNN 分群中的背景和信号分离度
+# 假设你的抗体包含 CD103, CD8, CD11c (请替换为你数据中的真名)
+top_adts <- rownames(seurat_obj_clean[["ADT"]])[1:min(3, nrow(seurat_obj_clean[["ADT"]]))]
+p_ridge_adt <- RidgePlot(
+  seurat_obj_clean, 
+  features = top_adts, 
+  assay = "ADT", 
+  group.by = "WNN_clusters", 
+  ncol = 3
+) + ggtitle("ADT Signal Specificity across Clusters")
+
+# ==========================================
+# 5. 组合并输出报告
+# ==========================================
+# 使用 patchwork 将所有图组合
+qc_report <- (p_spatial_qc / p_vln_qc) + 
+  plot_annotation(title = "CITE-seq Multi-modal QC Report", 
+                  subtitle = "Integrated Visualization on WNN UMAP Skeleton")
+
+print(qc_report)
+
+# 保存为 PDF 方便查阅
+# ggsave(paste0(output.dir, "Plots/WNN_QC_Full_Report.pdf"), qc_report, width = 14, height = 16)
+```
+QC 图表深度解读指南
+1. WNN 权重图 (WNN_weight.SCT)
+解读：数值越接近 1，代表该细胞越依赖 RNA 信号；数值越接近 0，代表该细胞越依赖 ADT 信号。
+
+专家视角：在 cDC1 研究中，如果 Mature cDC1s 群的 RNA 权重较低（即 ADT 权重高），说明该亚群的分类高度依赖表面蛋白（如 CCR7, CD103），这符合免疫学常识。
+
+2. 空间质量分布 (FeaturePlot)
+解读：观察 nCount_SCT 是否在某个特定的 Cluster 中异常高。
+
+风险预警：如果你发现某个小群的 nCount_SCT 极高且 WNN_weight.SCT 极低，要警惕它是否为未被过滤掉的双细胞（Doublets）或环境污染信号。
+
+3. 亚群小提琴图 (VlnPlot)
+解读：对比不同发育阶段的 nFeature_SCT。
+
+专家视角：通常 Proliferating cDC1s（增殖期）的基因数和 UMI 数会高于其他成熟阶段，这是因为细胞周期活跃。
+
+4. ADT 脊线图 (RidgePlot)
+解读：检查抗体信号是否呈现清晰的双峰分布。
+
+专家视角：如果某个关键抗体在所有群里都只有一个低位峰，说明该抗体染色失败；如果它在你定义的 Mature 群里有一个明显的高位峰，说明你的聚类和注释非常可靠。
