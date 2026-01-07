@@ -1,0 +1,641 @@
+---
+title: "CITE-seq 统一分析流程 (参数化多模式版本)"
+author: "baishuai"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+# 📚 分析模式说明
+
+本脚本支持**三种分析模式**,通过修改 `analysis_mode` 参数即可切换:
+
+| 模式 | 说明 | 数据来源 |
+|------|------|---------|
+| `cDC1` | 仅分析 cDC1 细胞 | GSE228544_..._subset_2023.rds.gz |
+| `cDC2` | 仅分析 cDC2 细胞 | GSE228544_..._subset2_v2_2023.rds.gz |
+| `integrated` | cDC1 + cDC2 整合分析 | 两个文件整合 + Harmony 批次校正 |
+
+## 🚀 快速开始
+
+1. **修改分析模式**: 编辑下方的 `analysis_mode` 参数
+2. **运行所有代码块**: 系统自动应用对应配置
+3. **查看结果**: 报告、图表、缓存都会带有模式标识
+
+---
+
+# 1. 参数配置
+
+```{r analysis_mode_config}
+################################################################################
+##################### 🎯 核心参数: 选择分析模式 #################################
+################################################################################
+
+# ==================== 在这里修改分析模式 ====================
+analysis_mode <- "cDC1"  # 可选: "cDC1", "cDC2", "integrated"
+
+# ==================== 通用路径配置 ====================
+data_dir <- "./data/GSE228544/"
+output.dir <- "results/"
+
+cat("\n", strrep("=", 80), "\n")
+cat("🎯 当前分析模式:", analysis_mode, "\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+```{r load_packages, message=FALSE}
+################################################################################
+############################## 加载 R 包 ########################################
+################################################################################
+
+suppressPackageStartupMessages({
+  library("tidyverse")
+  library("Seurat")
+  library("SingleCellExperiment")
+  library("scater")
+  library("scran")
+  library('DoubletFinder')
+  library("dplyr")
+  library("stringr")
+  library("readr")
+  library("scuttle")
+  library("ggplot2")
+  library("patchwork")
+  library("RColorBrewer")
+  library("R.utils")
+})
+
+# 整合分析需要额外的包
+if (analysis_mode == "integrated") {
+  suppressPackageStartupMessages({
+    library("harmony")  # 批次校正
+  })
+}
+
+cat("✓ R 包加载完成\n\n")
+```
+
+```{r config_function}
+################################################################################
+##################### 配置函数: 根据模式返回参数 ###############################
+################################################################################
+
+get_analysis_config <- function(mode) {
+  configs <- list(
+
+    # ==================== cDC1 配置 ====================
+    cDC1 = list(
+      source_file = "GSE228544_seuratObj_paper_dietSAM2and3_WT_subset_2023.rds.gz",
+      cell_types = c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s",
+                     "Late immature cDC1s", "Early mature cDC1s", "Late mature cDC1s"),
+      dims_rna = 25,
+      dims_adt = 15,
+      resolution = 0.8,
+      project_name = "GSE228544_cDC1",
+      cache_prefix = "cDC1",
+      plot_dir = "cDC1",
+      colors = RColorBrewer::brewer.pal(6, "Set2"),
+      key_markers = c("Xcr1", "Clec9a", "Itgae", "Ccr7", "Nr4a3", "Cebpb")
+    ),
+
+    # ==================== cDC2 配置 ====================
+    cDC2 = list(
+      source_file = "GSE228544_seuratObj_paper_dietSAM2and3_WT_subset2_v2_2023.rds.gz",
+      cell_types = c("pre-cDC2s", "Proliferating cDC2s", "Early immature cDC2s",
+                     "Late immature cDC2s", "Early mature cDC2s", "Late mature cDC2s"),
+      dims_rna = 30,
+      dims_adt = 20,
+      resolution = 0.8,
+      project_name = "GSE228544_cDC2",
+      cache_prefix = "cDC2",
+      plot_dir = "cDC2",
+      colors = RColorBrewer::brewer.pal(6, "Set1"),
+      key_markers = c("Sirpa", "Cd24a", "Notch2", "Ccr7", "Cd274", "Nr4a3")
+    ),
+
+    # ==================== 整合分析配置 ====================
+    integrated = list(
+      source_files = c(
+        "GSE228544_seuratObj_paper_dietSAM2and3_WT_subset_2023.rds.gz",
+        "GSE228544_seuratObj_paper_dietSAM2and3_WT_subset2_v2_2023.rds.gz"
+      ),
+      cell_types_list = list(
+        cDC1 = c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s",
+                 "Late immature cDC1s", "Early mature cDC1s", "Late mature cDC1s"),
+        cDC2 = c("pre-cDC2s", "Proliferating cDC2s", "Early immature cDC2s",
+                 "Late immature cDC2s", "Early mature cDC2s", "Late mature cDC2s")
+      ),
+      dims_rna = 25,
+      dims_adt = 20,
+      resolution = 0.6,  # 整合分析用稍低的分辨率
+      project_name = "GSE228544_integrated",
+      cache_prefix = "integrated",
+      plot_dir = "integrated",
+      batch_correction = TRUE,
+      integration_method = "harmony",
+      colors = RColorBrewer::brewer.pal(12, "Paired"),
+      key_markers = c("Xcr1", "Clec9a", "Sirpa", "Cd24a", "Ccr7", "Nr4a3")
+    )
+  )
+
+  if (!mode %in% names(configs)) {
+    stop("❌ Invalid analysis_mode: ", mode,
+         "\n   Choose from: ", paste(names(configs), collapse = ", "))
+  }
+
+  config <- configs[[mode]]
+
+  # 打印配置信息
+  cat("\n📋 分析配置加载完成:\n")
+  cat("  - 项目名称:", config$project_name, "\n")
+  if (mode != "integrated") {
+    cat("  - 数据源:", config$source_file, "\n")
+    cat("  - 细胞类型数:", length(config$cell_types), "\n")
+  } else {
+    cat("  - 数据源: cDC1 + cDC2 (整合)\n")
+    cat("  - 批次校正:", config$integration_method, "\n")
+  }
+  cat("  - RNA维度:", config$dims_rna, " | ADT维度:", config$dims_adt, "\n")
+  cat("  - 聚类分辨率:", config$resolution, "\n\n")
+
+  return(config)
+}
+
+# 加载配置
+config <- get_analysis_config(analysis_mode)
+
+# 创建输出目录
+dir.create(output.dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(output.dir, "Robjects"), showWarnings = FALSE)
+dir.create(paste0(output.dir, "Cache"), showWarnings = FALSE)
+dir.create(paste0(output.dir, "Plots/", config$plot_dir), showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(output.dir, "Plots/", config$plot_dir, "/RNA"), showWarnings = FALSE)
+dir.create(paste0(output.dir, "Plots/", config$plot_dir, "/ADT"), showWarnings = FALSE)
+dir.create(paste0(output.dir, "Files"), showWarnings = FALSE)
+```
+
+```{r cache_system}
+################################################################################
+##################### 智能缓存系统 (与之前相同) ##################################
+################################################################################
+
+cache_dir <- paste0(output.dir, "Cache/")
+
+load_or_compute <- function(cache_file, compute_fn, force_recompute = FALSE, description = "") {
+  cache_path <- paste0(cache_dir, cache_file)
+
+  if (!force_recompute && file.exists(cache_path)) {
+    cat("\n", strrep("=", 80), "\n")
+    cat("✓ [缓存加载] ", description, "\n")
+    cat("  文件: ", cache_file, "\n")
+    cat("  大小: ", round(file.size(cache_path)/1024/1024, 2), " MB\n")
+    cat(strrep("=", 80), "\n\n")
+    return(readRDS(cache_path))
+  } else {
+    cat("\n", strrep("=", 80), "\n")
+    cat("⚙ [开始计算] ", description, "\n")
+    cat("  这可能需要几分钟...\n")
+    cat(strrep("=", 80), "\n\n")
+
+    start_time <- Sys.time()
+    result <- compute_fn()
+    end_time <- Sys.time()
+
+    saveRDS(result, cache_path, compress = TRUE)
+
+    cat("\n", strrep("=", 80), "\n")
+    cat("✓ [计算完成] ", description, "\n")
+    cat("  耗时: ", round(difftime(end_time, start_time, units = "mins"), 2), " 分钟\n")
+    cat("  已保存至: ", cache_file, "\n")
+    cat("  大小: ", round(file.size(cache_path)/1024/1024, 2), " MB\n")
+    cat(strrep("=", 80), "\n\n")
+
+    return(result)
+  }
+}
+
+clean_memory <- function(objects_to_remove = NULL) {
+  if (!is.null(objects_to_remove)) {
+    rm(list = objects_to_remove, envir = .GlobalEnv)
+  }
+  gc(verbose = FALSE)
+  invisible(NULL)
+}
+
+cat("✓ 智能缓存系统已加载\n")
+cat("  缓存目录:", cache_dir, "\n\n")
+```
+
+# 2. 数据加载
+
+```{r load_raw_data}
+################################################################################
+##################### 加载原始 10X 数据 ########################################
+################################################################################
+
+cat("📦 加载原始 10X 数据...\n")
+rawData <- Read10X(data.dir = data_dir)
+rawDataRNA <- rawData$`Gene Expression`
+rawDataADT <- rawData$`Antibody Capture`
+
+cat("✓ 数据加载完成\n")
+cat("  RNA 特征数:", nrow(rawDataRNA), "\n")
+cat("  ADT 特征数:", nrow(rawDataADT), "\n")
+cat("  细胞条形码数:", ncol(rawDataRNA), "\n\n")
+```
+
+# 3. 细胞子集提取 (模式自适应)
+
+```{r extract_subset}
+################################################################################
+##################### 提取细胞子集 (根据分析模式) ################################
+################################################################################
+
+if (analysis_mode %in% c("cDC1", "cDC2")) {
+
+  # ==================== 单一细胞类型提取 ====================
+  subset_data <- load_or_compute(
+    cache_file = paste0(config$cache_prefix, "_01_subset_extracted.rds"),
+    description = paste0(config$cache_prefix, " 子集提取"),
+    compute_fn = function() {
+      # 解压和读取
+      full_path <- file.path(data_dir, config$source_file)
+      cat("  解压文件:", config$source_file, "\n")
+      try(gunzip(full_path, remove = FALSE, overwrite = TRUE))
+
+      rds_path <- gsub("\\.gz$", "", full_path)
+      cat("  读取 Seurat 对象...\n")
+      seuratObjAll <- readRDS(rds_path)
+
+      cat("  原始对象细胞类型分布:\n")
+      print(table(Idents(seuratObjAll)))
+
+      # 检查并提取细胞
+      existing_types <- intersect(config$cell_types, levels(Idents(seuratObjAll)))
+      if (length(existing_types) < length(config$cell_types)) {
+        missing <- setdiff(config$cell_types, existing_types)
+        warning("部分细胞类型未找到: ", paste(missing, collapse = ", "))
+      }
+
+      seuratObjAll <- UpdateSeuratObject(seuratObjAll)
+      cells_to_keep <- WhichCells(seuratObjAll, idents = existing_types)
+
+      # 过滤数据
+      rawDataRNA_filtered <- rawDataRNA[, cells_to_keep]
+      rawDataADT_filtered <- rawDataADT[, cells_to_keep]
+
+      cat("\n  ✓ 提取完成:\n")
+      cat("    细胞数:", length(cells_to_keep), "\n")
+      cat("    RNA 特征:", nrow(rawDataRNA_filtered), "\n")
+      cat("    ADT 特征:", nrow(rawDataADT_filtered), "\n")
+
+      return(list(
+        rawDataRNA = rawDataRNA_filtered,
+        rawDataADT = rawDataADT_filtered,
+        cells = cells_to_keep,
+        metadata = seuratObjAll@meta.data[cells_to_keep, ],
+        original_idents = Idents(seuratObjAll)[cells_to_keep]
+      ))
+    }
+  )
+
+} else if (analysis_mode == "integrated") {
+
+  # ==================== cDC1 + cDC2 整合提取 ====================
+  subset_data <- load_or_compute(
+    cache_file = "integrated_01_subset_extracted.rds",
+    description = "cDC1 + cDC2 整合数据提取",
+    compute_fn = function() {
+      all_cells <- list()
+      all_metadata <- list()
+      all_idents <- list()
+
+      subset_names <- c("cDC1", "cDC2")
+
+      for (i in seq_along(config$source_files)) {
+        subset_name <- subset_names[i]
+        file_path <- file.path(data_dir, config$source_files[i])
+
+        cat("\n  处理", subset_name, "...\n")
+        cat("  解压:", basename(file_path), "\n")
+        try(gunzip(file_path, remove = FALSE, overwrite = TRUE))
+
+        rds_path <- gsub("\\.gz$", "", file_path)
+        seurat_obj <- readRDS(rds_path)
+        seurat_obj <- UpdateSeuratObject(seurat_obj)
+
+        # 提取细胞
+        cell_types <- config$cell_types_list[[i]]
+        existing_types <- intersect(cell_types, levels(Idents(seurat_obj)))
+        cells <- WhichCells(seurat_obj, idents = existing_types)
+
+        cat("  提取细胞数:", length(cells), "\n")
+
+        all_cells[[subset_name]] <- cells
+
+        # 添加批次标签
+        metadata <- seurat_obj@meta.data[cells, ]
+        metadata$subset <- subset_name
+        metadata$original_cluster <- as.character(Idents(seurat_obj)[cells])
+        all_metadata[[subset_name]] <- metadata
+        all_idents[[subset_name]] <- Idents(seurat_obj)[cells]
+      }
+
+      # 合并
+      combined_cells <- unlist(all_cells)
+      combined_metadata <- do.call(rbind, all_metadata)
+      combined_idents <- unlist(all_idents)
+
+      cat("\n  ✓ 整合完成:\n")
+      cat("    cDC1 细胞:", length(all_cells$cDC1), "\n")
+      cat("    cDC2 细胞:", length(all_cells$cDC2), "\n")
+      cat("    总计:", length(combined_cells), "个细胞\n")
+
+      # 过滤 RNA 和 ADT
+      rawDataRNA_filtered <- rawDataRNA[, combined_cells]
+      rawDataADT_filtered <- rawDataADT[, combined_cells]
+
+      return(list(
+        rawDataRNA = rawDataRNA_filtered,
+        rawDataADT = rawDataADT_filtered,
+        cells = combined_cells,
+        metadata = combined_metadata,
+        batch_info = combined_metadata$subset,
+        original_idents = combined_idents,
+        cell_counts = sapply(all_cells, length)
+      ))
+    }
+  )
+}
+
+# 提取到全局变量
+rawDataRNA <- subset_data$rawDataRNA
+rawDataADT <- subset_data$rawDataADT
+metadata_original <- subset_data$metadata
+
+if (analysis_mode == "integrated") {
+  batch_info <- subset_data$batch_info
+  cat("\n批次信息:\n")
+  print(table(batch_info))
+}
+
+cat("\n✓ 子集提取完成\n\n")
+
+# 清理
+rm(subset_data)
+gc()
+```
+
+---
+
+**继续到下一部分...**
+
+# 4. 质控 (与之前相同,省略具体代码)
+
+```{r qc}
+# SCE 质控代码 (与优化脚本相同)
+# ...
+```
+
+# 5. 归一化 (与之前相同)
+
+```{r normalization}
+# Scran 归一化代码 (与优化脚本相同)
+# ...
+```
+
+# 6. Seurat 对象创建和聚类
+
+```{r seurat_clustering}
+################################################################################
+##################### Seurat 聚类 (模式自适应) ##################################
+################################################################################
+
+seurat_obj <- load_or_compute(
+  cache_file = paste0(config$cache_prefix, "_04_seurat_clustered.rds"),
+  description = paste0("Seurat ", config$cache_prefix, " 聚类"),
+  compute_fn = function() {
+    # 创建 Seurat 对象
+    cat("  步骤 1/8: 创建 Seurat 对象...\n")
+    seurat_obj <- CreateSeuratObject(counts = rawDataFiltered, project = config$project_name)
+
+    # 注入 scran logcounts
+    cat("  步骤 2/8: 注入 scran logcounts...\n")
+    seurat_obj[["RNA"]]$data <- as(logcounts(sce_clean), "dgCMatrix")
+    seurat_obj$percent.mito <- sce_clean$subsets_Mito_percent
+
+    # 添加原始细胞类型信息
+    if (exists("metadata_original")) {
+      seurat_obj$original_cluster <- metadata_original$original_cluster
+    }
+
+    # SCTransform
+    cat("  步骤 3/8: 运行 SCTransform...\n")
+    seurat_obj <- SCTransform(seurat_obj, assay = "RNA", new.assay.name = "SCT",
+                               vars.to.regress = "percent.mito", verbose = FALSE)
+
+    # PCA
+    cat("  步骤 4/8: 运行 PCA...\n")
+    seurat_obj <- RunPCA(seurat_obj, assay = "SCT", verbose = FALSE)
+
+    # ==================== 整合分析特殊处理: Harmony 批次校正 ====================
+    if (analysis_mode == "integrated" && config$batch_correction) {
+      cat("  步骤 5/8: Harmony 批次校正 (整合模式特有)...\n")
+      seurat_obj$batch <- batch_info  # 添加批次信息
+
+      seurat_obj <- RunHarmony(
+        seurat_obj,
+        group.by.vars = "batch",
+        reduction = "pca",
+        dims.use = 1:config$dims_rna,
+        verbose = FALSE
+      )
+
+      reduction_to_use <- "harmony"
+    } else {
+      reduction_to_use <- "pca"
+    }
+
+    # UMAP
+    cat("  步骤 6/8: 运行 UMAP...\n")
+    seurat_obj <- RunUMAP(seurat_obj, dims = 1:config$dims_rna,
+                          reduction = reduction_to_use, verbose = FALSE)
+
+    # 聚类
+    cat("  步骤 7/8: 聚类分析...\n")
+    seurat_obj <- FindNeighbors(seurat_obj, dims = 1:config$dims_rna,
+                                reduction = reduction_to_use)
+    seurat_obj <- FindClusters(seurat_obj, resolution = config$resolution, verbose = FALSE)
+
+    cat("  步骤 8/8: 完成!\n")
+    return(seurat_obj)
+  }
+)
+
+cat("\n✓ Seurat 聚类完成\n")
+cat("  聚类数:", length(unique(Idents(seurat_obj))), "\n\n")
+```
+
+# 7. 可视化 (模式特异性)
+
+```{r visualization}
+################################################################################
+##################### 可视化 (根据分析模式调整) ##################################
+################################################################################
+
+# 基础 UMAP
+p_umap <- DimPlot(seurat_obj, reduction = "umap", label = TRUE, cols = config$colors) +
+  labs(title = paste0(config$project_name, " - UMAP Clustering"))
+print(p_umap)
+
+# 如果是整合分析,额外显示批次分布
+if (analysis_mode == "integrated") {
+  p_batch <- DimPlot(seurat_obj, reduction = "umap", group.by = "batch") +
+    labs(title = "Batch Distribution (cDC1 vs cDC2)")
+  print(p_batch)
+
+  # 显示原始细胞类型
+  p_original <- DimPlot(seurat_obj, reduction = "umap", group.by = "original_cluster",
+                       label = TRUE, repel = TRUE) +
+    labs(title = "Original Cell Type Annotations")
+  print(p_original)
+}
+
+# 关键标志基因
+p_markers <- FeaturePlot(seurat_obj, features = config$key_markers, ncol = 3)
+print(p_markers)
+```
+
+# 8. ADT 整合 (WNN)
+
+```{r wnn_integration}
+################################################################################
+##################### WNN 多模态融合 (所有模式通用) #############################
+################################################################################
+
+seurat_obj_wnn <- load_or_compute(
+  cache_file = paste0(config$cache_prefix, "_07_wnn_integrated.rds"),
+  description = paste0("WNN 多模态融合 - ", config$cache_prefix),
+  compute_fn = function() {
+    # ADT 处理
+    cat("  处理 ADT 数据...\n")
+    raw_adt_matrix <- as.matrix(rawDataADT)
+    seurat_obj[["ADT"]] <- CreateAssayObject(counts = raw_adt_matrix[, colnames(seurat_obj)])
+
+    seurat_obj <- NormalizeData(seurat_obj, assay = "ADT", normalization.method = "CLR", margin = 2)
+    seurat_obj <- ScaleData(seurat_obj, assay = "ADT")
+    seurat_obj <- RunPCA(seurat_obj, assay = "ADT", reduction.name = "adt_pca", verbose = FALSE)
+
+    # 确定用哪个 reduction
+    rna_reduction <- ifelse(analysis_mode == "integrated" && config$batch_correction,
+                           "harmony", "pca")
+
+    # WNN 融合
+    cat("  计算 WNN 权重...\n")
+    seurat_obj <- FindMultiModalNeighbors(
+      seurat_obj,
+      reduction.list = list(rna_reduction, "adt_pca"),
+      dims.list = list(1:config$dims_rna, 1:config$dims_adt)
+    )
+
+    seurat_obj <- RunUMAP(seurat_obj, nn.name = "weighted.nn",
+                          reduction.name = "wnn_umap", verbose = FALSE)
+    seurat_obj <- FindClusters(seurat_obj, graph.name = "wsnn",
+                              resolution = config$resolution, verbose = FALSE)
+    seurat_obj$WNN_clusters <- Idents(seurat_obj)
+
+    cat("  ✓ WNN 融合完成\n")
+    return(seurat_obj)
+  }
+)
+
+# WNN UMAP 可视化
+p_wnn <- DimPlot(seurat_obj_wnn, reduction = "wnn_umap", group.by = "WNN_clusters",
+                label = TRUE, cols = config$colors) +
+  labs(title = paste0(config$project_name, " - WNN UMAP"))
+print(p_wnn)
+```
+
+# 9. 差异基因分析
+
+```{r deg_analysis}
+# FindAllMarkers 代码 (与优化脚本相同)
+# ...
+```
+
+# 10. 结果保存
+
+```{r save_results}
+################################################################################
+##################### 保存结果 (带模式标识) ####################################
+################################################################################
+
+# 保存最终 Seurat 对象
+final_rds <- paste0(output.dir, "Robjects/", config$project_name, "_final.rds")
+saveRDS(seurat_obj_wnn, final_rds)
+cat("✓ 最终对象已保存:", final_rds, "\n")
+
+# 保存差异基因表
+if (exists("exp.markers")) {
+  deg_csv <- paste0(output.dir, "Files/", config$project_name, "_DEG.csv")
+  write.csv(exp.markers, deg_csv, row.names = FALSE)
+  cat("✓ 差异基因已保存:", deg_csv, "\n")
+}
+
+cat("\n", strrep("=", 80), "\n")
+cat("🎉 分析完成!\n")
+cat("  模式:", analysis_mode, "\n")
+cat("  项目:", config$project_name, "\n")
+cat("  细胞数:", ncol(seurat_obj_wnn), "\n")
+cat("  聚类数:", length(unique(seurat_obj_wnn$WNN_clusters)), "\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# 附录: 缓存管理工具
+
+```{r cache_management_tools, eval=FALSE}
+# 查看当前模式的所有缓存
+list_mode_cache <- function(mode = analysis_mode) {
+  files <- list.files(cache_dir, pattern = paste0("^", mode, "_"), full.names = TRUE)
+  if (length(files) == 0) {
+    cat("No cache files found for mode:", mode, "\n")
+    return(NULL)
+  }
+
+  info <- file.info(files)
+  info$file <- basename(rownames(info))
+  info$size_mb <- round(info$size / 1024 / 1024, 2)
+  info <- info[, c("file", "size_mb", "mtime")]
+  return(info[order(-info$size_mb), ])
+}
+
+# 清除特定模式的缓存
+clear_mode_cache <- function(mode) {
+  files <- list.files(cache_dir, pattern = paste0("^", mode, "_"), full.names = TRUE)
+  if (length(files) > 0) {
+    file.remove(files)
+    cat("✓ Removed", length(files), "cache files for mode:", mode, "\n")
+  } else {
+    cat("No cache files to remove for mode:", mode, "\n")
+  }
+}
+
+# 用法示例:
+# list_mode_cache("cDC1")
+# list_mode_cache("cDC2")
+# list_mode_cache("integrated")
+# clear_mode_cache("cDC2")  # 谨慎使用!
+```
+
+---
+
+**参数化统一脚本 v1.0**
