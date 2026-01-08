@@ -839,10 +839,23 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
   require(patchwork)
   require(Seurat)
 
-  # Seurat v5 适配
-  if (is(object, "Seurat") && !is.null(object[["RNA"]]) && is(object[["RNA"]], "Assay5")) {
-    message(">>> 检测到 Seurat v5 对象，正在执行 JoinLayers...")
-    object <- JoinLayers(object)
+  # Seurat v5 适配 - 检查并合并所有 assay 的层
+  if (is(object, "Seurat")) {
+    # 检查 RNA assay
+    if (!is.null(object[["RNA"]]) && is(object[["RNA"]], "Assay5")) {
+      message(">>> 检测到 Seurat v5 RNA assay，正在执行 JoinLayers...")
+      object[["RNA"]] <- JoinLayers(object[["RNA"]])
+    }
+    # 检查 SCT assay (SCTransform 后的主要 assay)
+    if (!is.null(object[["SCT"]]) && is(object[["SCT"]], "Assay5")) {
+      message(">>> 检测到 Seurat v5 SCT assay，正在执行 JoinLayers...")
+      object[["SCT"]] <- JoinLayers(object[["SCT"]])
+    }
+    # 检查 ADT assay (CITE-seq)
+    if (!is.null(object[["ADT"]]) && is(object[["ADT"]], "Assay5")) {
+      message(">>> 检测到 Seurat v5 ADT assay，正在执行 JoinLayers...")
+      object[["ADT"]] <- JoinLayers(object[["ADT"]])
+    }
   }
 
   df_ns <- asNamespace("DoubletFinder")
