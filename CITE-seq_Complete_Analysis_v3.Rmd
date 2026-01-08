@@ -891,6 +891,27 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
     }
   }
 
+  # 清理 metadata - 移除可能导致 xtfrm 错误的列
+  # 保存原始 metadata 的备份
+  original_meta <- object@meta.data
+
+  # 检查并移除数据框类型的列
+  problematic_cols <- c()
+  for (col_name in colnames(object@meta.data)) {
+    col_data <- object@meta.data[[col_name]]
+    # 如果列是数据框、列表或其他复杂类型，记录下来
+    if (is.data.frame(col_data) || is.list(col_data) || is.matrix(col_data)) {
+      problematic_cols <- c(problematic_cols, col_name)
+    }
+  }
+
+  if (length(problematic_cols) > 0) {
+    message(">>> 检测到复杂类型的 metadata 列: ", paste(problematic_cols, collapse = ", "))
+    message(">>> 临时移除这些列以避免 DoubletFinder 错误")
+    # 临时移除这些列
+    object@meta.data <- object@meta.data[, !colnames(object@meta.data) %in% problematic_cols, drop = FALSE]
+  }
+
   df_ns <- asNamespace("DoubletFinder")
   param_fun <- if (exists("paramSweep_v3", envir = df_ns)) {
     get("paramSweep_v3", envir = df_ns)
@@ -1002,6 +1023,19 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
     labs(title = "Step 3: QC Verification")
 
   print(p_pk + p_umap + p_qc + plot_layout(ncol = 2))
+
+  # 恢复之前移除的复杂类型列（如果有的话）
+  if (length(problematic_cols) > 0) {
+    message(">>> 恢复之前移除的 metadata 列")
+    # 获取 DoubletFinder 添加的新列
+    new_cols <- setdiff(colnames(object@meta.data), colnames(original_meta))
+    # 合并：原始列 + DoubletFinder 新增列
+    for (col in problematic_cols) {
+      if (col %in% colnames(original_meta)) {
+        object@meta.data[[col]] <- original_meta[[col]]
+      }
+    }
+  }
 
   return(object)
 }
