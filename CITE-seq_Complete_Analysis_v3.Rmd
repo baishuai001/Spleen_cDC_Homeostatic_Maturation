@@ -108,6 +108,30 @@ cat("✓ R 包加载完成\n\n")
 ##################### 配置函数: 根据模式返回参数 ###############################
 ################################################################################
 
+# 动态生成足够数量的颜色
+generate_colors <- function(n) {
+  if (n <= 0) return(character(0))
+
+  # 组合多个调色板以获得丰富的颜色
+  base_colors <- c(
+    RColorBrewer::brewer.pal(min(9, max(3, n)), "Set1"),
+    RColorBrewer::brewer.pal(min(8, max(3, n)), "Set2"),
+    RColorBrewer::brewer.pal(min(12, max(3, n)), "Set3"),
+    RColorBrewer::brewer.pal(min(12, max(3, n)), "Paired")
+  )
+
+  # 去重并取前 n 个
+  unique_colors <- unique(base_colors)
+
+  # 如果还不够，使用 hcl.colors 补充
+  if (length(unique_colors) < n) {
+    additional <- hcl.colors(n - length(unique_colors), palette = "Dynamic")
+    unique_colors <- c(unique_colors, additional)
+  }
+
+  return(unique_colors[1:n])
+}
+
 get_analysis_config <- function(mode) {
   configs <- list(
 
@@ -122,7 +146,7 @@ get_analysis_config <- function(mode) {
       project_name = "GSE228544_cDC1",
       cache_prefix = "cDC1",
       plot_dir = "cDC1",
-      colors = RColorBrewer::brewer.pal(8, "Set2"),
+      colors = NULL,  # 动态生成，见下方函数
       key_markers = c("Xcr1", "Clec9a", "Itgae", "Ccr7", "Nr4a3", "Cebpb")
     ),
 
@@ -137,7 +161,7 @@ get_analysis_config <- function(mode) {
       project_name = "GSE228544_cDC2",
       cache_prefix = "cDC2",
       plot_dir = "cDC2",
-      colors = RColorBrewer::brewer.pal(8, "Set1"),
+      colors = NULL,  # 动态生成，见下方函数
       key_markers = c("Sirpa", "Cd24a", "Notch2", "Ccr7", "Cd274", "Nr4a3")
     ),
 
@@ -157,7 +181,7 @@ get_analysis_config <- function(mode) {
       plot_dir = "integrated",
       batch_correction = TRUE,
       integration_method = "harmony",
-      colors = RColorBrewer::brewer.pal(12, "Paired"),
+      colors = NULL,  # 动态生成，见下方函数
       key_markers = c("Xcr1", "Clec9a", "Sirpa", "Cd24a", "Ccr7", "Nr4a3")
     ),
 
@@ -174,7 +198,7 @@ get_analysis_config <- function(mode) {
       cache_prefix = "full",
       plot_dir = "full",
       batch_correction = FALSE,  # 单一数据源，无需批次校正
-      colors = RColorBrewer::brewer.pal(12, "Set3"),
+      colors = NULL,  # 动态生成，见下方函数
       # 已知的细胞类型 marker（用于自动标注）
       marker_genes = list(
         cDC1 = c("Xcr1", "Clec9a", "Itgae", "Cadm1"),
@@ -745,6 +769,13 @@ cat("  聚类数:", length(unique(Idents(seurat_obj))), "\n\n")
 ## 5.1 基础可视化
 
 ```{r basic_visualization, fig.width=14, fig.height=6}
+# 动态生成足够的颜色
+n_clusters <- length(unique(Idents(seurat_obj)))
+if (is.null(config$colors)) {
+  config$colors <- generate_colors(n_clusters)
+  cat("  生成", n_clusters, "种颜色用于可视化\n")
+}
+
 # UMAP
 p_umap <- DimPlot(seurat_obj, reduction = "umap", label = TRUE, cols = config$colors) +
   labs(title = paste0(config$project_name, " - UMAP Clustering"))
@@ -1187,6 +1218,12 @@ cat("  WNN 聚类数:", length(unique(seurat_obj_wnn$WNN_clusters)), "\n\n")
 ## 8.1 WNN 可视化对比
 
 ```{r wnn_visualization, fig.width=18, fig.height=6}
+# 确保有足够的颜色
+n_wnn_clusters <- length(unique(seurat_obj_wnn$WNN_clusters))
+if (is.null(config$colors) || length(config$colors) < n_wnn_clusters) {
+  config$colors <- generate_colors(n_wnn_clusters)
+}
+
 # 三种驱动方式对比
 p_adt <- DimPlot(seurat_obj_wnn, reduction = "adt_umap", group.by = "ADT_clusters",
                 label = TRUE) + ggtitle("ADT-driven")
