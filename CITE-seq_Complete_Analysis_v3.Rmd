@@ -1078,47 +1078,123 @@ doublet_result <- load_or_compute(
 
 seurat_obj <- doublet_result
 
-# 清理元数据
-seurat_obj@meta.data <- seurat_obj@meta.data[, !grepl("pANN|DF.classifications", colnames(seurat_obj@meta.data))]
+# ✅ 保留所有 DoubletFinder 结果列（pANN, DF.classifications, DFPrediction）
+# 这些列在后续分析中很有用：
+# - 可以在聚类后检查某个 cluster 是否富集 doublets
+# - 可以调整阈值重新分类，而不需要重新运行 DoubletFinder
+# - 可以用不同的过滤策略（如只删除 High Confidence doublets）
 
+cat("\n✓ DoubletFinder 检测完成\n")
 cat("\n双细胞检测结果:\n")
-print(table(as.character(seurat_obj$DFPrediction)))
+print(table(seurat_obj$DFPrediction))
 
-# 过滤双细胞
-seurat_obj_clean <- subset(seurat_obj, subset = as.character(DFPrediction) %in%
-                           c("Singlet", "Low Confidence", "Low Confidence adjusted"))
+# 详细统计信息
+n_total <- ncol(seurat_obj)
+n_high_conf <- sum(seurat_obj$DFPrediction %in% c("High Confidence", "High Confidence adjusted"), na.rm = TRUE)
+n_low_conf <- sum(seurat_obj$DFPrediction %in% c("Low Confidence", "Low Confidence adjusted"), na.rm = TRUE)
+n_singlet <- sum(seurat_obj$DFPrediction == "Singlet", na.rm = TRUE)
 
-cat("\n✓ 双细胞过滤完成\n")
-cat("  过滤前:", ncol(seurat_obj), "个细胞\n")
-cat("  过滤后:", ncol(seurat_obj_clean), "个细胞\n")
-cat("  移除:", ncol(seurat_obj) - ncol(seurat_obj_clean), "个双细胞\n\n")
+cat("\n细胞分类统计:\n")
+cat("  总细胞数:", n_total, "\n")
+cat("  Singlet:", n_singlet, sprintf("(%.1f%%)", 100*n_singlet/n_total), "\n")
+cat("  Low Confidence Doublet:", n_low_conf, sprintf("(%.1f%%)", 100*n_low_conf/n_total), "\n")
+cat("  High Confidence Doublet:", n_high_conf, sprintf("(%.1f%%)", 100*n_high_conf/n_total), "\n")
 
+cat("\n⚠️  重要说明:\n")
+cat("   - Doublet 标签已保存在 seurat_obj$DFPrediction 列\n")
+cat("   - 所有细胞（包括 doublets）均保留在对象中\n")
+cat("   - 建议先完成聚类分析，观察 doublet 分布后再决定是否过滤\n")
+cat("   - 如需过滤 doublets，请运行下方的【6.3 可选代码块】\n\n")
+
+# 继续使用包含所有细胞的对象（不创建 seurat_obj_clean）
 rm(doublet_result)
 gc()
 ```
 
-## 6.3 双细胞过滤后重新聚类
+## 6.3 可选：过滤双细胞 (Optional - eval=FALSE)
 
-```{r recluster_after_doublet}
-# 重新聚类
-seurat_obj_clean <- FindVariableFeatures(seurat_obj_clean, verbose = FALSE)
-seurat_obj_clean <- ScaleData(seurat_obj_clean, verbose = FALSE)
-seurat_obj_clean <- RunPCA(seurat_obj_clean, verbose = FALSE)
+```{r filter_doublets, eval=FALSE}
+################################################################################
+##################### 可选步骤：物理删除 Doublets ################################
+################################################################################
+#
+# ⚠️ 默认不运行此代码块 (eval=FALSE)
+#
+# 运行前请考虑：
+#
+# 【保留 doublets 的优势】
+# 1. 可以在聚类后检查某个 cluster 是否富集 doublets
+# 2. 可以调整阈值重新分类，无需重新运行 DoubletFinder
+# 3. 可以尝试不同的过滤策略
+#
+# 【删除 doublets 的时机】
+# - 建议在完成初步聚类和质控可视化后再删除
+# - 或者在单独的下游分析脚本中删除
+#
+# 【如何运行此代码块】
+# 方法1: 将 eval=FALSE 改为 eval=TRUE
+# 方法2: 在 RStudio 中手动运行此代码块
+#
+################################################################################
 
-# 判断用哪个 reduction
-if (analysis_mode == "integrated" && config$batch_correction && require("harmony", quietly = TRUE)) {
-  seurat_obj_clean <- RunHarmony(seurat_obj_clean, group.by.vars = "batch",
-                                 reduction = "pca", verbose = FALSE)
-  reduction_to_use <- "harmony"
+# ==================== 选择过滤策略 ====================
+
+# 策略1：只删除 High Confidence doublets（推荐，保守）
+seurat_obj_clean <- subset(seurat_obj,
+                           subset = DFPrediction %in% c("Singlet",
+                                                         "Low Confidence",
+                                                         "Low Confidence adjusted"))
+
+# 策略2：删除所有 doublets（严格）
+# seurat_obj_clean <- subset(seurat_obj, subset = DFPrediction == "Singlet")
+
+# 策略3：不删除任何细胞（最灵活，用于探索性分析）
+# seurat_obj_clean <- seurat_obj
+
+cat("\n✓ 双细胞过滤完成\n")
+cat("  过滤前:", ncol(seurat_obj), "个细胞\n")
+cat("  过滤后:", ncol(seurat_obj_clean), "个细胞\n")
+cat("  移除:", ncol(seurat_obj) - ncol(seurat_obj_clean), "个细胞\n\n")
+```
+
+## 6.4 确定后续分析使用的对象
+
+```{r set_analysis_object}
+################################################################################
+##################### 选择分析对象 ##############################################
+################################################################################
+#
+# 根据是否运行了过滤代码块（6.3），自动选择使用的对象：
+# - 如果未过滤：使用 seurat_obj（包含所有细胞）
+# - 如果已过滤：使用 seurat_obj_clean（仅包含 Singlets）
+#
+################################################################################
+
+# 检查是否创建了过滤后的对象
+if (exists("seurat_obj_clean")) {
+  # 用户运行了过滤代码块
+  seurat_final <- seurat_obj_clean
+  cat("✓ 检测到过滤后的对象 seurat_obj_clean\n")
+  cat("  使用", ncol(seurat_final), "个细胞继续分析（已过滤 doublets）\n\n")
 } else {
-  reduction_to_use <- "pca"
+  # 用户未过滤，使用全部细胞
+  seurat_final <- seurat_obj
+  cat("✓ 使用完整对象 seurat_obj\n")
+  cat("  使用", ncol(seurat_final), "个细胞继续分析（包含所有细胞）\n")
+
+  # 显示 doublet 统计
+  if ("DFPrediction" %in% colnames(seurat_final@meta.data)) {
+    doublet_count <- sum(seurat_final$DFPrediction %in%
+                        c("High Confidence", "High Confidence adjusted",
+                          "Low Confidence", "Low Confidence adjusted"), na.rm = TRUE)
+    cat("  其中包含", doublet_count, "个 doublets\n")
+  }
+  cat("\n")
 }
 
-seurat_obj_clean <- FindNeighbors(seurat_obj_clean, dims = 1:config$dims_rna,
-                                  reduction = reduction_to_use, verbose = FALSE)
-seurat_obj_clean <- FindClusters(seurat_obj_clean, resolution = config$resolution, verbose = FALSE)
-
-cat("✓ 重新聚类完成，新聚类数:", length(unique(Idents(seurat_obj_clean))), "\n\n")
+# 为了向后兼容，将 seurat_final 赋值给 seurat_obj_clean
+# 这样后续代码无需修改
+seurat_obj_clean <- seurat_final
 ```
 
 ---
