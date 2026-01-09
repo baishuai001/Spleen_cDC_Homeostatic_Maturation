@@ -991,9 +991,10 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
                       maxPCT/100, (maxPCT/100)*(1-homotypic.prop)) * nCells)
   names(nExp_poi) <- c("min", "min_adj", "max", "max_adj")
 
-  # 第一轮
+  # 第一轮：生成 pANN
+  # 关键修复：使用 reuse.pANN = NULL（而不是 FALSE）解决 "cannot xtfrm data frames" 错误
   object <- df_main_fun(object, pN = pN, pK = pKValue, nExp = nExp_poi["min"],
-                        reuse.pANN = FALSE, PCs = PCs, sct = is_sct)
+                        reuse.pANN = NULL, PCs = PCs, sct = is_sct)
 
   all_pann_cols <- grep("^pANN_", colnames(object@meta.data), value = TRUE)
   pann_col <- all_pann_cols[length(all_pann_cols)]
