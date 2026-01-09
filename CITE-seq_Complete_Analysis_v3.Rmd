@@ -348,22 +348,22 @@ if (analysis_mode %in% c("cDC1", "cDC2")) {
 
       rds_path <- gsub("\\.gz$", "", full_path)
       cat("  读取 Seurat 对象...\n")
-      seuratObjAll <- readRDS(rds_path)
+      subset_seurat <- readRDS(rds_path)
 
       cat("  原始对象细胞类型分布:\n")
-      print(table(Idents(seuratObjAll)))
+      print(table(Idents(subset_seurat)))
 
       # 自动获取所有可用的 Idents
-      all_idents <- levels(Idents(seuratObjAll))
+      all_idents <- levels(Idents(subset_seurat))
       cat("\n  ✓ 检测到", length(all_idents), "种细胞类型:\n")
       cat("   ", paste(all_idents, collapse = ", "), "\n")
 
       # 更新配置中的 cell_types
       config$cell_types <<- all_idents
 
-      seuratObjAll <- UpdateSeuratObject(seuratObjAll)
+      subset_seurat <- UpdateSeuratObject(subset_seurat)
       # 提取所有细胞（不过滤）
-      cells_to_keep <- colnames(seuratObjAll)
+      cells_to_keep <- colnames(subset_seurat)
 
       # 过滤数据
       rawDataRNA_filtered <- rawDataRNA[, cells_to_keep]
@@ -378,8 +378,8 @@ if (analysis_mode %in% c("cDC1", "cDC2")) {
         rawDataRNA = rawDataRNA_filtered,
         rawDataADT = rawDataADT_filtered,
         cells = cells_to_keep,
-        metadata = seuratObjAll@meta.data[cells_to_keep, ],
-        original_idents = Idents(seuratObjAll)[cells_to_keep],
+        metadata = subset_seurat@meta.data[cells_to_keep, ],
+        original_idents = Idents(subset_seurat)[cells_to_keep],
         cell_types = all_idents
       ))
     }
