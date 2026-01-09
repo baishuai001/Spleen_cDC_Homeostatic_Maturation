@@ -912,6 +912,18 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
     object@meta.data <- object@meta.data[, !colnames(object@meta.data) %in% problematic_cols, drop = FALSE]
   }
 
+  # 额外保护：确保所有 factor 列都是简单的 factor（不是 ordered factor）
+  for (col_name in colnames(object@meta.data)) {
+    if (is.factor(object@meta.data[[col_name]])) {
+      object@meta.data[[col_name]] <- factor(as.character(object@meta.data[[col_name]]))
+    }
+  }
+
+  # 确保 Idents 也是简单的 factor
+  Idents(object) <- factor(as.character(Idents(object)))
+
+  message(">>> Metadata 清理完成，准备运行 DoubletFinder")
+
   df_ns <- asNamespace("DoubletFinder")
   param_fun <- if (exists("paramSweep_v3", envir = df_ns)) {
     get("paramSweep_v3", envir = df_ns)
