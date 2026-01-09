@@ -101,7 +101,265 @@ if (analysis_mode == "integrated") {
 cat("✓ R 包加载完成\n\n")
 ```
 
-## 1.3 配置函数
+## 1.3 工具函数定义
+
+```{r utility_functions}
+################################################################################
+##################### 通用工具函数 ##############################################
+################################################################################
+#
+# 📖 本节定义：
+#    1. plot_and_save(): 绘图并自动保存为 PNG + PDF
+#    2. 其他可能需要的工具函数
+#
+# 🎯 使用 plot_and_save() 的优势：
+#    ✅ 一次调用，同时完成显示和保存
+#    ✅ 自动保存 PNG（适合 PPT/Word）和 PDF（适合发表）
+#    ✅ 自动管理输出目录结构
+#    ✅ 统一图片尺寸和分辨率（发表级别 300 dpi）
+#    ✅ 避免重复运行代码来保存图片
+#
+################################################################################
+
+#' 绘图并自动保存（PNG + PDF）
+#'
+#' @description
+#' 这是一个包装函数，用于：
+#' 1. 在 RMarkdown 中显示图片（print）
+#' 2. 自动保存为 PNG（300 dpi，适合 PPT/Word）
+#' 3. 自动保存为 PDF（矢量图，适合发表）
+#' 4. 自动创建和管理输出目录
+#'
+#' @param plot_obj ggplot 对象或 patchwork 组合图
+#' @param filename 文件名（不含扩展名），例如 "UMAP_clustering"
+#' @param subfolder 子文件夹名称，例如 "QC", "Clustering", "DEG", "DoubletFinder"
+#'                  会保存到 results/Plots/{mode}/{subfolder}/
+#' @param width 图片宽度（英寸），默认 10
+#' @param height 图片高度（英寸），默认 8
+#' @param dpi 分辨率，默认 300（发表级别）
+#'
+#' @return 无返回值，直接保存文件并在控制台显示保存路径
+#'
+#' @examples
+#' # 示例1：保存 UMAP 图到 Clustering 子文件夹
+#' p <- DimPlot(seurat_obj, reduction = "umap")
+#' plot_and_save(p, "UMAP_clusters", "Clustering", width = 12, height = 10)
+#'
+#' # 示例2：保存组合图到 DEG 子文件夹
+#' p_combined <- p1 | p2 | p3
+#' plot_and_save(p_combined, "DEG_heatmap", "DEG", width = 18, height = 8)
+#'
+plot_and_save <- function(plot_obj, filename, subfolder = "",
+                          width = 10, height = 8, dpi = 300) {
+
+  # ==================== 步骤1：在 RMarkdown 中显示图片 ====================
+  print(plot_obj)
+
+  # ==================== 步骤2：构建保存路径 ====================
+  # 基础目录：results/Plots/{mode}/
+  base_dir <- paste0(output.dir, "Plots/", config$plot_dir, "/")
+
+  # 如果指定了子文件夹，添加到路径中
+  if (subfolder != "") {
+    save_dir <- paste0(base_dir, subfolder, "/")
+  } else {
+    save_dir <- base_dir
+  }
+
+  # 创建目录（如果不存在）
+  dir.create(save_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # ==================== 步骤3：保存为 PNG ====================
+  # PNG 格式：适合 PPT、Word、网页展示
+  # 优点：文件小，兼容性好
+  png_path <- paste0(save_dir, filename, ".png")
+  ggsave(
+    filename = png_path,
+    plot = plot_obj,
+    width = width,
+    height = height,
+    dpi = dpi,
+    bg = "white"  # 白色背景，避免透明背景问题
+  )
+
+  # ==================== 步骤4：保存为 PDF ====================
+  # PDF 格式：矢量图，适合发表、印刷
+  # 优点：无限放大不失真，期刊要求
+  pdf_path <- paste0(save_dir, filename, ".pdf")
+  ggsave(
+    filename = pdf_path,
+    plot = plot_obj,
+    width = width,
+    height = height,
+    device = "pdf"
+  )
+
+  # ==================== 步骤5：显示保存信息 ====================
+  cat("  ✓ 图片已保存:\n")
+  cat("    PNG:", png_path, "\n")
+  cat("    PDF:", pdf_path, "\n\n")
+}
+
+cat("✓ 工具函数加载完成\n")
+cat("  - plot_and_save(): 绘图并自动保存 PNG + PDF\n\n")
+```
+
+## 1.4 感兴趣的基因列表（用户可自定义）
+
+```{r genes_of_interest}
+################################################################################
+##################### 感兴趣的基因列表 ##########################################
+################################################################################
+#
+# 📝 使用说明：
+#
+# 这里定义您在各种可视化中想要查看的基因。
+# 修改此处后，后续所有相关可视化都会自动使用这些基因。
+#
+# 🎯 优势：
+# ✅ 集中管理，一次修改全局生效
+# ✅ 避免在多处代码中重复修改
+# ✅ 便于针对特定研究问题定制分析
+# ✅ 便于复用和分享分析流程
+#
+# 💡 如何使用：
+# 1. 根据您的研究兴趣，修改下面的基因列表
+# 2. 后续所有 FeaturePlot、DotPlot、Heatmap 等都会使用这些基因
+# 3. 也可以临时在特定代码块中覆盖这些设置
+#
+################################################################################
+
+# ==================== cDC1 相关基因 ====================
+# 这些基因用于识别和表征 cDC1 细胞
+genes_cDC1 <- c(
+  "Xcr1",      # cDC1 经典 marker，趋化因子受体
+  "Clec9a",    # cDC1 特异性 C-type lectin，抗原提呈
+  "Itgae",     # CD103，组织驻留标志
+  "Cadm1",     # 细胞粘附分子
+  "Ccr7",      # 成熟和迁移 marker
+  "Nr4a3",     # 核受体转录因子
+  "Batf3",     # cDC1 发育必需转录因子
+  "Irf8"       # cDC1 分化关键转录因子
+)
+
+# ==================== cDC2 相关基因 ====================
+# 这些基因用于识别和表征 cDC2 细胞
+genes_cDC2 <- c(
+  "Sirpa",     # cDC2 经典 marker，CD172a
+  "Cd24a",     # CD24，成熟 marker
+  "Notch2",    # cDC2 发育必需
+  "Clec4a4",   # C-type lectin，cDC2 特异
+  "Ccr7",      # 成熟和迁移 marker
+  "Cd274",     # PD-L1，免疫调节
+  "Irf4",      # cDC2 分化关键转录因子
+  "Zbtb46"     # DC 特异转录因子
+)
+
+# ==================== 免疫细胞 lineage markers ====================
+# 用于区分不同免疫细胞类型
+genes_lineage <- c(
+  "Cd3e",      # T 细胞通用 marker
+  "Cd4",       # CD4+ T 细胞
+  "Cd8a",      # CD8+ T 细胞
+  "Cd19",      # B 细胞
+  "Ms4a1",     # B 细胞（CD20）
+  "Ncr1",      # NK 细胞
+  "Nkg7",      # NK 细胞
+  "Ly6c2",     # 单核细胞
+  "Ccr2",      # 单核细胞
+  "Siglech",   # pDC 特异
+  "Bst2",      # pDC marker
+  "S100a8",    # 中性粒细胞
+  "S100a9"     # 中性粒细胞
+)
+
+# ==================== 功能相关基因 ====================
+# 用于评估细胞的功能状态
+genes_functional <- c(
+  "Mki67",     # 增殖 marker
+  "Top2a",     # 增殖 marker
+  "Il12b",     # 炎症因子，Th1 极化
+  "Il12a",     # 炎症因子
+  "Ifng",      # 干扰素 gamma
+  "Ifnb1",     # I 型干扰素
+  "Tnf",       # TNF-alpha
+  "Il6",       # IL-6
+  "Il10",      # 抗炎因子
+  "Tgfb1",     # TGF-beta，免疫抑制
+  "Cd86",      # 共刺激分子
+  "Cd40"       # 共刺激分子
+)
+
+# ==================== 成熟/激活相关基因 ====================
+# 用于评估 DC 的成熟和激活状态
+genes_maturation <- c(
+  "Ccr7",      # 成熟和迁移
+  "Cd83",      # 成熟 marker
+  "Cd86",      # 共刺激分子，激活
+  "Cd40",      # 共刺激分子，激活
+  "Il12b",     # 成熟 DC 分泌
+  "Relb",      # NF-κB 通路，成熟
+  "Ccl22",     # 趋化因子，吸引 Treg
+  "Fscn1"      # 成熟 DC marker
+)
+
+# ==================== 质控相关基因 ====================
+# 用于评估数据质量和识别低质量细胞
+genes_qc <- c(
+  "Mt-co1",    # 线粒体基因
+  "Mt-co2",    # 线粒体基因
+  "Mt-nd1",    # 线粒体基因
+  "Mt-atp6",   # 线粒体基因
+  "Rpl3",      # 核糖体大亚基
+  "Rpl4",      # 核糖体大亚基
+  "Rps3",      # 核糖体小亚基
+  "Rps4x"      # 核糖体小亚基
+)
+
+# ==================== 根据分析模式自动选择主要基因 ====================
+# 这个逻辑会根据当前分析模式，自动选择最相关的基因列表
+# 后续可视化会优先使用 genes_primary
+
+if (analysis_mode == "cDC1") {
+  genes_primary <- genes_cDC1
+  genes_comparison <- genes_cDC2
+  cat("✓ 检测到 cDC1 分析模式\n")
+  cat("  主要关注 cDC1 相关基因\n")
+
+} else if (analysis_mode == "cDC2") {
+  genes_primary <- genes_cDC2
+  genes_comparison <- genes_cDC1
+  cat("✓ 检测到 cDC2 分析模式\n")
+  cat("  主要关注 cDC2 相关基因\n")
+
+} else if (analysis_mode == "integrated") {
+  genes_primary <- c(genes_cDC1, genes_cDC2)
+  genes_comparison <- genes_lineage
+  cat("✓ 检测到整合分析模式\n")
+  cat("  主要关注 cDC1 + cDC2 相关基因\n")
+
+} else if (analysis_mode == "full") {
+  genes_primary <- genes_lineage
+  genes_comparison <- genes_functional
+  cat("✓ 检测到全量分析模式\n")
+  cat("  主要关注所有免疫细胞 lineage markers\n")
+}
+
+cat("\n📊 基因列表配置完成:\n")
+cat("  - 主要基因 (genes_primary):", length(genes_primary), "个\n")
+cat("    前5个:", paste(genes_primary[1:min(5, length(genes_primary))], collapse = ", "), "\n")
+cat("  - 对比基因 (genes_comparison):", length(genes_comparison), "个\n")
+cat("    前5个:", paste(genes_comparison[1:min(5, length(genes_comparison))], collapse = ", "), "\n")
+cat("  - 功能基因 (genes_functional):", length(genes_functional), "个\n")
+cat("  - 成熟基因 (genes_maturation):", length(genes_maturation), "个\n")
+cat("  - 质控基因 (genes_qc):", length(genes_qc), "个\n\n")
+
+cat("💡 自定义提示：\n")
+cat("   如需修改可视化的基因，请编辑上方的基因列表\n")
+cat("   所有后续可视化都会自动使用这些基因\n\n")
+```
+
+## 1.5 配置函数
 
 ```{r config_function}
 ################################################################################
