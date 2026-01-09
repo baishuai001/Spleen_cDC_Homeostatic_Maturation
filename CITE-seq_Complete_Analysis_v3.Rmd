@@ -951,6 +951,10 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
     object[["percent.mito"]] <- PercentageFeatureSet(object, pattern = "^MT-|^mt-|^Mt-")
   }
 
+  # ==================== 设置随机种子确保可重复性 ====================
+  set.seed(123)
+  message(">>> 设置随机种子为 123，确保结果可重复")
+
   # 参数寻优
   is_sct <- "SCT" %in% SeuratObject::Assays(object)
   if (length(PCs) == 1) PCs <- 1:PCs
@@ -1195,6 +1199,159 @@ if (exists("seurat_obj_clean")) {
 # 为了向后兼容，将 seurat_final 赋值给 seurat_obj_clean
 # 这样后续代码无需修改
 seurat_obj_clean <- seurat_final
+```
+
+## 6.5 DoubletFinder 质控验证 (QC Validation)
+
+```{r doublet_qc_validation, fig.width=16, fig.height=12}
+################################################################################
+##################### DoubletFinder 质控验证 #####################################
+################################################################################
+#
+# 重要性：验证 DoubletFinder 的预测是合理的，而不是误删生物学相关细胞
+#
+# 三个关键验证：
+# 1. 细胞数量变化
+# 2. Doublets 在 UMAP 上的空间分布
+# 3. Doublets 的特征基因分析
+#
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("📊 DoubletFinder 质控验证\n")
+cat(strrep("=", 80), "\n\n")
+
+# ==================== 验证1：细胞数量变化 ====================
+
+cat("【验证 1】细胞分类统计\n")
+
+# 统计各类细胞数量
+doublet_stats <- data.frame(
+  Category = c("Singlet", "Low Confidence", "High Confidence"),
+  Count = c(
+    sum(seurat_obj$DFPrediction == "Singlet", na.rm = TRUE),
+    sum(seurat_obj$DFPrediction %in% c("Low Confidence", "Low Confidence adjusted"), na.rm = TRUE),
+    sum(seurat_obj$DFPrediction %in% c("High Confidence", "High Confidence adjusted"), na.rm = TRUE)
+  )
+)
+
+doublet_stats$Percentage <- round(100 * doublet_stats$Count / sum(doublet_stats$Count), 2)
+
+print(doublet_stats)
+
+# 绘制柱状图
+p_barplot <- ggplot(doublet_stats, aes(x = Category, y = Count, fill = Category)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(Count, " (", Percentage, "%)")), vjust = -0.5) +
+  scale_fill_manual(values = c("Singlet" = "#E6E6E6",
+                                "Low Confidence" = "#FFA500",
+                                "High Confidence" = "#E41A1C")) +
+  labs(title = "Validation 1: Cell Classification Summary",
+       x = "Category", y = "Cell Count") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+
+# ==================== 验证2：UMAP 空间分布 ====================
+
+cat("\n【验证 2】Doublets 在 UMAP 上的空间分布\n")
+cat("   检查要点：\n")
+cat("   - Doublets 是否聚集在细胞类型交界处？（合理）\n")
+cat("   - 是否有整簇独立的细胞被标记？（需警惕，可能是高 RNA 含量的增殖细胞）\n\n")
+
+# UMAP：显示所有细胞，按 DFPrediction 着色
+p_umap_doublet <- DimPlot(seurat_obj, group.by = "DFPrediction", pt.size = 0.5) +
+  scale_color_manual(values = c(
+    "Singlet" = "lightgrey",
+    "Low Confidence" = "#FFA500",
+    "Low Confidence adjusted" = "#FFD700",
+    "High Confidence" = "#E41A1C",
+    "High Confidence adjusted" = "#FF6347"
+  )) +
+  labs(title = "Validation 2a: Doublet Distribution on UMAP") +
+  theme(legend.position = "right")
+
+# UMAP：仅显示 Doublets
+doublet_cells <- colnames(seurat_obj)[seurat_obj$DFPrediction != "Singlet"]
+p_umap_doublet_only <- DimPlot(seurat_obj, cells.highlight = doublet_cells,
+                               cols.highlight = "red", cols = "lightgrey",
+                               pt.size = 0.5) +
+  labs(title = "Validation 2b: Doublets Only (Highlighted)") +
+  NoLegend()
+
+# ==================== 验证3：特征基因分析 ====================
+
+cat("【验证 3】Doublets 的特征基因\n")
+cat("   检查要点：\n")
+cat("   - 是否富集线粒体/核糖体基因？\n")
+cat("   - 是否同时高表达两种互斥的 lineage markers？\n")
+cat("     例如：CD3（T细胞）+ CD19（B细胞）\n\n")
+
+# 为 FindMarkers 准备分组
+seurat_obj$is_doublet <- ifelse(
+  seurat_obj$DFPrediction %in% c("High Confidence", "High Confidence adjusted"),
+  "Doublet", "Singlet"
+)
+
+# 运行差异分析
+doublet_markers <- FindMarkers(
+  seurat_obj,
+  ident.1 = "Doublet",
+  ident.2 = "Singlet",
+  group.by = "is_doublet",
+  assay = "SCT",
+  logfc.threshold = 0.25,
+  min.pct = 0.1,
+  verbose = FALSE
+)
+
+# Top 上调基因
+top_doublet_genes <- doublet_markers %>%
+  filter(avg_log2FC > 0) %>%
+  arrange(desc(avg_log2FC)) %>%
+  head(20)
+
+cat("Top 20 上调基因（Doublet vs Singlet）:\n")
+print(top_doublet_genes[, c("avg_log2FC", "pct.1", "pct.2", "p_val_adj")])
+
+# 检查是否富集线粒体/核糖体基因
+mt_genes <- grep("^MT-|^mt-", rownames(top_doublet_genes), value = TRUE, ignore.case = TRUE)
+ribo_genes <- grep("^RPL|^RPS|^Rpl|^Rps", rownames(top_doublet_genes), value = TRUE)
+
+cat("\n线粒体基因:", length(mt_genes), "个 -", paste(mt_genes, collapse = ", "))
+cat("\n核糖体基因:", length(ribo_genes), "个 -", paste(ribo_genes, collapse = ", "), "\n")
+
+# 可视化：Doublet 特征基因的表达
+genes_to_plot <- rownames(top_doublet_genes)[1:min(9, nrow(top_doublet_genes))]
+p_feature <- FeaturePlot(seurat_obj, features = genes_to_plot, ncol = 3, pt.size = 0.3)
+
+# ==================== 组合图表 ====================
+
+cat("\n正在生成综合质控报告...\n")
+
+# 上半部分：数量统计 + UMAP 分布
+p_top <- p_barplot | p_umap_doublet | p_umap_doublet_only
+
+# 下半部分：特征基因表达
+p_bottom <- p_feature
+
+# 组合
+p_validation <- p_top / p_bottom + plot_layout(heights = c(1, 1.5))
+
+print(p_validation)
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ DoubletFinder 质控验证完成\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("📋 验证结论指南：\n")
+cat("  ✅ 好的迹象：\n")
+cat("     - Doublets 主要在细胞类型交界处\n")
+cat("     - 富集线粒体/核糖体基因\n")
+cat("     - 同时表达互斥 markers (如 CD3 + CD19)\n\n")
+cat("  ⚠️  需要警惕：\n")
+cat("     - 整簇独立的细胞被标记为 doublet\n")
+cat("     - 可能是增殖细胞或某些高 RNA 含量的特殊细胞类型\n")
+cat("     - 建议保留这些细胞，进一步分析后再决定\n\n")
 ```
 
 ---
