@@ -787,45 +787,147 @@ cat("  线粒体基因数:", sum(is.mito), "\n\n")
 
 ## 3.2 QC 可视化
 
+> **为什么需要 QC 可视化？**
+>
+> 在设定质控阈值前，必须先可视化数据分布，了解：
+> 1. **基因检测数（nGene）分布**：判断细胞质量，正常细胞通常检测到 500-5000 个基因
+> 2. **线粒体比例分布**：识别损伤细胞，健康细胞通常 < 10-20%
+> 3. **UMI vs 线粒体相关性**：检查是否存在系统性偏差
+>
+> **如何解读这些图？**
+>
+> - **小提琴图**：显示分布的整体形状（单峰/双峰）和离群值
+> - **散点图**：识别异常细胞群（如高线粒体 + 低 UMI 的损伤细胞）
+
 ```{r qc_visualization, fig.width=12, fig.height=4}
-# 小提琴图：基因数
+################################################################################
+##################### QC 可视化：过滤前的数据分布 ##################################
+################################################################################
+#
+# 【功能说明】
+# 在设定质控阈值前，先可视化数据的原始分布，识别潜在的质量问题
+#
+# 【图表说明】
+# 图1：基因检测数分布（nGene）
+#   - 正常范围：500-5000 基因/细胞
+#   - 过低：空液滴或损伤细胞
+#   - 过高：可能是 doublets
+#
+# 图2：线粒体比例分布（Mito %）
+#   - 正常范围：< 10-20%
+#   - 过高：细胞膜破损，胞质 mRNA 丢失
+#
+# 图3：UMI vs 线粒体相关性
+#   - 预期：无显著相关
+#   - 如果高线粒体细胞集中在低 UMI 区域 → 说明质控策略合理
+#
+################################################################################
+
+# 小提琴图：基因检测数
+# 用途：观察基因检测数的整体分布，识别低质量细胞群
 p1 <- ggplot(plot_df, aes(x="Sample", y=detected)) +
-  geom_violin(fill="#56B4E9") +
-  geom_jitter(size=0.1, alpha=0.2) +
+  geom_violin(fill="#56B4E9", alpha=0.7) +  # 蓝色小提琴
+  geom_jitter(size=0.1, alpha=0.2) +        # 叠加散点显示单个细胞
   theme_classic() +
-  labs(title="Detected Genes per Cell", y="nGene", x="")
+  labs(title="Detected Genes per Cell",
+       subtitle="Typical range: 500-5000 genes",
+       y="nGene (detected features)", x="")
 
 # 小提琴图：线粒体比例
+# 用途：识别损伤细胞（线粒体比例异常高）
 p2 <- ggplot(plot_df, aes(x="Sample", y=subsets_Mito_percent)) +
-  geom_violin(fill="#E69F00") +
+  geom_violin(fill="#E69F00", alpha=0.7) +  # 橙色小提琴
   geom_jitter(size=0.1, alpha=0.2) +
+  geom_hline(yintercept = 20, linetype="dashed", color="red", alpha=0.5) +  # 参考线：20%
   theme_classic() +
-  labs(title="Mito Percentage", y="Mito %", x="")
+  labs(title="Mito Percentage",
+       subtitle="Typical threshold: < 10-20%",
+       y="Mito %", x="")
 
-# 散点图：UMI vs Mito
+# 散点图：UMI vs 线粒体比例
+# 用途：检查 UMI 和线粒体比例的相关性
+# 正常情况：高 UMI 细胞应该有低线粒体比例
+# 异常情况：如果高 UMI 细胞也有高线粒体 → 可能是技术问题
 p3 <- ggplot(plot_df, aes(x=sum, y=subsets_Mito_percent)) +
   geom_point(size=0.5, alpha=0.4, color="darkblue") +
+  geom_hline(yintercept = 20, linetype="dashed", color="red", alpha=0.5) +
   theme_minimal() +
-  labs(title="Metadata Correlation", x="Total UMI (nUMI)", y="Mito %")
+  labs(title="Metadata Correlation",
+       subtitle="Check for systematic bias",
+       x="Total UMI (nUMI)", y="Mito %")
 
-print(p1 + p2 + p3)
+# 组合三个图表
+p_qc_before <- p1 + p2 + p3
+
+# 保存图片（在 QC 子文件夹）
+plot_and_save(p_qc_before, "qc_metrics_before_filtering",
+              subfolder = "QC", width = 12, height = 4)
 ```
 
+> **🔍 如何解读 QC 可视化结果？**
+>
+> **正常的数据分布**：
+> - **nGene**：单峰分布，中位数在 1000-3000 之间
+> - **Mito %**：单峰分布，大部分细胞 < 10%，少数离群值 > 20%
+> - **UMI vs Mito**：大部分细胞聚集在高 UMI + 低 Mito 区域
+>
+> **异常信号**：
+> - **nGene 双峰分布**：可能存在两种质量的细胞群，需要仔细检查
+> - **Mito % > 20% 的细胞很多**：样本可能受损，或者解离过程有问题
+> - **高 UMI 细胞也有高 Mito**：可能是技术问题，而非生物学差异
+
 ## 3.3 自动化质控过滤
+
+> **为什么使用自动化过滤？**
+>
+> 传统的硬阈值（如 nGene > 200, Mito < 5%）无法适应不同样本的异质性。自动化过滤基于**中位数绝对偏差（MAD）**，能够：
+> 1. 自动适应数据分布
+> 2. 识别统计学意义上的离群值
+> 3. 对不同质量的样本使用不同的阈值
+>
+> **MAD 方法原理**：
+> - 计算数据的中位数和 MAD
+> - 定义离群值为：偏离中位数超过 N × MAD 的数据点
+> - N（nmads）通常设为 3-5（保守）或 5-10（宽松）
 
 ```{r qc_filtering}
 ################################################################################
 ##################### 质控: 自动化过滤 ##########################################
 ################################################################################
+#
+# 【方法说明】
+# 使用基于 MAD (Median Absolute Deviation) 的自适应阈值
+# 优势：不需要手动设定硬阈值（如 nGene > 200），自动适应数据分布
+#
+# 【参数说明】
+# nmads = 5：表示偏离中位数 5 倍 MAD 的细胞被视为离群值
+#   - nmads 越小 → 过滤越严格（剔除更多细胞）
+#   - nmads 越大 → 过滤越宽松（保留更多细胞）
+#   - 典型范围：3（严格）、5（适中）、10（宽松）
+#
+# 【过滤策略】
+# 1. UMI 总数（sum）：双侧过滤（过低或过高都剔除）
+#    - 过低：可能是空液滴或损伤细胞
+#    - 过高：可能是 doublets（但 DoubletFinder 会进一步处理）
+# 2. 基因检测数（detected）：双侧过滤
+#    - 过低：低质量细胞
+#    - 过高：doublets
+# 3. 线粒体比例（Mito %）：单侧过滤（只剔除过高的）
+#    - 过高：细胞膜破损
+#
+################################################################################
 
-# QC 参数 (全量模式使用更宽松的参数)
+# 设置 QC 参数
+# 注意：full 模式和 subset 模式目前使用相同参数，可根据需要调整
 if (analysis_mode == "full") {
-  nmad_low_feature  <- 5
-  nmad_high_feature <- 5
-  nmad_low_UMI      <- 5
-  nmad_high_UMI     <- 5
-  nmad_high_mito    <- 10
+  # 全量模式：包含所有细胞类型，使用宽松参数避免误删稀有细胞类型
+  nmad_low_feature  <- 5   # 基因数下限：5 MAD（适中）
+  nmad_high_feature <- 5   # 基因数上限：5 MAD（适中）
+  nmad_low_UMI      <- 5   # UMI 下限：5 MAD（适中）
+  nmad_high_UMI     <- 5   # UMI 上限：5 MAD（适中）
+  nmad_high_mito    <- 10  # 线粒体上限：10 MAD（宽松，避免误删高代谢细胞）
 } else {
+  # 子集模式：cDC1/cDC2，细胞类型相对均一，可以使用相同参数
   nmad_low_feature  <- 5
   nmad_high_feature <- 5
   nmad_low_UMI      <- 5
@@ -833,51 +935,142 @@ if (analysis_mode == "full") {
   nmad_high_mito    <- 10
 }
 
+cat("使用的 QC 参数（nmads）：\n")
+cat("  基因数下限/上限:", nmad_low_feature, "/", nmad_high_feature, "\n")
+cat("  UMI 下限/上限:", nmad_low_UMI, "/", nmad_high_UMI, "\n")
+cat("  线粒体上限:", nmad_high_mito, "\n\n")
+
 # 离群值识别
+# type = "both": 检测双侧离群值（过低和过高）
+# type = "higher": 只检测单侧离群值（过高）
+# log = TRUE: 对数据取对数后再计算 MAD（适用于偏态分布）
 outlier_sum <- isOutlier(sce$sum, nmads = nmad_low_UMI, type = "both", log = TRUE)
 outlier_detected <- isOutlier(sce$detected, nmads = nmad_low_feature, type = "both", log = TRUE)
 outlier_mito <- isOutlier(sce$subsets_Mito_percent, nmads = nmad_high_mito, type = "higher")
 
 # 汇总过滤结果
+# 只要满足任意一个过滤条件，细胞就被标记为 discard = TRUE
 sce$discard <- outlier_sum | outlier_detected | outlier_mito
 
-cat("自动化质控统计：\n")
-cat("低 UMI 剔除细胞数:", sum(outlier_sum), "\n")
-cat("低基因数剔除细胞数:", sum(outlier_detected), "\n")
-cat("高线粒体剔除细胞数:", sum(outlier_mito), "\n")
-cat("总计剔除细胞总数:", sum(sce$discard), "\n")
-cat("保留细胞数:", sum(!sce$discard), "\n\n")
+# 打印统计信息
+cat("【自动化质控统计】\n")
+cat("  低 UMI 剔除细胞数:", sum(outlier_sum), sprintf("(%.1f%%)", 100*sum(outlier_sum)/ncol(sce)), "\n")
+cat("  低基因数剔除细胞数:", sum(outlier_detected), sprintf("(%.1f%%)", 100*sum(outlier_detected)/ncol(sce)), "\n")
+cat("  高线粒体剔除细胞数:", sum(outlier_mito), sprintf("(%.1f%%)", 100*sum(outlier_mito)/ncol(sce)), "\n")
+cat("  总计剔除细胞数:", sum(sce$discard), sprintf("(%.1f%%)", 100*sum(sce$discard)/ncol(sce)), "\n")
+cat("  保留细胞数:", sum(!sce$discard), sprintf("(%.1f%%)", 100*sum(!sce$discard)/ncol(sce)), "\n\n")
 
-# 提取阈值
+# 提取自动计算的阈值（用于后续可视化）
 thresholds <- list(
   sum = attr(outlier_sum, "thresholds")["lower"],
   detected = attr(outlier_detected, "thresholds")["lower"],
   mito = attr(outlier_mito, "thresholds")["higher"]
 )
+
+cat("【自动计算的阈值】\n")
+cat("  UMI 下限:", round(thresholds$sum, 0), "\n")
+cat("  基因数下限:", round(thresholds$detected, 0), "\n")
+cat("  线粒体上限:", round(thresholds$mito, 2), "%\n\n")
 ```
+
+> **🔍 如何评估过滤效果？**
+>
+> **合理的过滤比例**：
+> - **总过滤率 < 10-20%**：说明样本质量良好
+> - **总过滤率 20-40%**：中等质量，需要检查实验流程
+> - **总过滤率 > 40%**：质量较差，可能需要调整 nmads 参数或重新实验
+>
+> **各指标的预期过滤率**：
+> - **低 UMI**：通常 < 5%（除非样本有大量空液滴）
+> - **低基因数**：通常 < 5%
+> - **高线粒体**：通常 5-15%（取决于组织类型和解离方法）
 
 ## 3.4 QC 过滤可视化
 
+> **如何评估过滤效果？**
+>
+> 这个散点图展示了自动计算的阈值（红色虚线）如何将细胞分为"保留"（绿色）和"剔除"（黄色）。通过这个图，您可以：
+> 1. 确认阈值是否合理（是否准确分离了低质量细胞）
+> 2. 检查是否存在边界模糊的区域（需要人工判断）
+> 3. 识别异常的细胞群（如高 UMI + 高 Mito 的技术问题细胞）
+
 ```{r qc_filter_plot, fig.width=8, fig.height=6}
+################################################################################
+##################### QC 过滤效果可视化 ##########################################
+################################################################################
+#
+# 【功能说明】
+# 展示自动计算的阈值如何将细胞分为"保留"和"剔除"两类
+#
+# 【图表解读】
+# - 绿色点：保留的细胞（通过质控）
+# - 黄色点：剔除的细胞（未通过质控）
+# - 红色虚线：自动计算的阈值
+#
+# 【检查要点】
+# 1. 剔除的细胞是否主要集中在低 UMI + 高 Mito 区域？（合理）
+# 2. 是否有大量高 UMI + 低 Mito 的细胞被剔除？（可疑，需要调整参数）
+# 3. 边界是否清晰？（模糊的边界可能需要人工判断）
+#
+################################################################################
+
+# 提取 SCE 对象的 metadata
 plot_df <- as.data.frame(colData(sce))
 
+# 绘制散点图：UMI vs 线粒体，按过滤结果着色
 p_auto_qc <- ggplot(plot_df, aes(x = sum, y = subsets_Mito_percent, color = discard)) +
   geom_point(size = 0.5, alpha = 0.5) +
-  scale_color_manual(values = c("FALSE" = "#21918c", "TRUE" = "#fde725")) +
-  geom_hline(yintercept = thresholds$mito, linetype = "dashed", color = "red") +
-  geom_vline(xintercept = thresholds$sum, linetype = "dashed", color = "red") +
-  theme_minimal() +
-  labs(title = paste0("Adaptive Thresholds - ", config$project_name),
-       subtitle = paste0("Mito Limit: ", round(thresholds$mito, 2), "%, UMI Limit: ", round(thresholds$sum, 0)),
+  # 颜色方案：绿色（保留）、黄色（剔除）
+  scale_color_manual(values = c("FALSE" = "#21918c", "TRUE" = "#fde725"),
+                     labels = c("FALSE" = "Retained", "TRUE" = "Discarded")) +
+  # 添加阈值线（红色虚线）
+  geom_hline(yintercept = thresholds$mito, linetype = "dashed", color = "red", size = 0.8) +
+  geom_vline(xintercept = thresholds$sum, linetype = "dashed", color = "red", size = 0.8) +
+  # 添加阈值标注
+  annotate("text", x = thresholds$sum, y = max(plot_df$subsets_Mito_percent) * 0.9,
+           label = paste0("UMI threshold: ", round(thresholds$sum, 0)),
+           color = "red", size = 3, hjust = -0.1) +
+  annotate("text", x = max(plot_df$sum) * 0.9, y = thresholds$mito,
+           label = paste0("Mito threshold: ", round(thresholds$mito, 2), "%"),
+           color = "red", size = 3, vjust = -0.5) +
+  theme_minimal(base_size = 12) +
+  labs(title = paste0("Adaptive QC Thresholds - ", config$project_name),
+       subtitle = paste0("Retained: ", sum(!sce$discard), " cells | Discarded: ", sum(sce$discard), " cells (",
+                        round(100*sum(sce$discard)/ncol(sce), 1), "%)"),
        x = "Total UMI Count", y = "Mitochondrial %",
-       color = "Discarded")
+       color = "Status")
 
-print(p_auto_qc)
+# 保存图片
+plot_and_save(p_auto_qc, "qc_adaptive_thresholds",
+              subfolder = "QC", width = 10, height = 8)
 
 # 执行过滤
 sce_clean <- sce[, !sce$discard]
-cat("\n✓ 质控过滤完成，保留", ncol(sce_clean), "个细胞\n\n")
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 质控过滤完成\n")
+cat(strrep("=", 80), "\n")
+cat("  过滤前细胞数:", ncol(sce), "\n")
+cat("  过滤后细胞数:", ncol(sce_clean), "\n")
+cat("  剔除细胞数:", sum(sce$discard), sprintf("(%.1f%%)\n", 100*sum(sce$discard)/ncol(sce)))
+cat("  剔除原因分布：\n")
+cat("    - 低 UMI:", sum(outlier_sum), sprintf("(%.1f%%)\n", 100*sum(outlier_sum)/ncol(sce)))
+cat("    - 低基因数:", sum(outlier_detected), sprintf("(%.1f%%)\n", 100*sum(outlier_detected)/ncol(sce)))
+cat("    - 高线粒体:", sum(outlier_mito), sprintf("(%.1f%%)\n", 100*sum(outlier_mito)/ncol(sce)))
+cat(strrep("=", 80), "\n\n")
 ```
+
+> **🔍 过滤结果判断指南**
+>
+> **理想的过滤效果**：
+> - 剔除的细胞（黄色）主要位于**左下角**（低 UMI）和**右上角**（高 Mito）
+> - 保留的细胞（绿色）形成清晰的主群体
+> - 两类细胞之间有明确的边界
+>
+> **需要警惕的情况**：
+> - **大量高质量细胞被剔除**：如果绿色主群体中有明显的黄色点 → 参数过严，建议增大 nmads
+> - **低质量细胞未被剔除**：如果左下角或右上角有大量绿色点 → 参数过松，建议减小 nmads
+> - **边界模糊**：如果黄色和绿色点混杂 → 可能需要手动检查边界细胞
 
 ---
 
@@ -1107,8 +1300,24 @@ if (analysis_mode == "full") {
 
 ## 5.3 Elbow Plot
 
-```{r elbow_plot}
-print(ElbowPlot(seurat_obj, ndims = 50))
+> **如何使用 Elbow Plot 选择 PC 数量？**
+>
+> Elbow Plot 显示每个 PC 解释的方差比例。通常选择"拐点"处的 PC 数量，即曲线开始变平的位置。
+>
+> - **保守策略**：选择拐点（如 PC 15-20）
+> - **宽松策略**：选择更多 PC（如 PC 30-50），包含更多生物学变异
+
+```{r elbow_plot, fig.width=8, fig.height=6}
+# 生成 Elbow Plot
+p_elbow <- ElbowPlot(seurat_obj, ndims = 50) +
+  geom_vline(xintercept = config$dims_rna, linetype = "dashed", color = "red") +
+  labs(title = "Elbow Plot - PC Selection",
+       subtitle = paste0("Current setting: PC 1-", config$dims_rna)) +
+  theme_minimal()
+
+# 显示并保存
+plot_and_save(p_elbow, "elbow_plot_pc_selection",
+              subfolder = "Clustering", width = 8, height = 6)
 ```
 
 ---
@@ -1225,6 +1434,18 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
   pKValue <- as.numeric(pKValue_char)
   message(">>> 选定最佳 pK: ", pKValue)
 
+  # 保存 pK sweep 结果到 misc，以便缓存加载后重新绘图
+  if (!is.null(object@misc)) {
+    object@misc$doubletfinder_pk_sweep <- bcmvn
+    object@misc$doubletfinder_pk_value <- pKValue
+  } else {
+    object@misc <- list(
+      doubletfinder_pk_sweep = bcmvn,
+      doubletfinder_pk_value = pKValue
+    )
+  }
+  message(">>> pK sweep 结果已保存到 @misc 中，可用于缓存加载后重新绘图")
+
   p_pk <- ggplot(bcmvn, aes(x = as.numeric(as.character(pK)), y = BCmetric)) +
     geom_line() + geom_point() +
     geom_vline(xintercept = pKValue, color = "red", linetype = "dashed") +
@@ -1305,7 +1526,17 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
     NoLegend() +
     labs(title = "Step 3: QC Verification")
 
-  print(p_pk + p_umap + p_qc + plot_layout(ncol = 2))
+  # 组合三步可视化
+  p_three_steps <- p_pk + p_umap + p_qc + plot_layout(ncol = 2)
+
+  # 显示并保存
+  print(p_three_steps)
+
+  # 尝试保存图片（如果 plot_and_save 函数存在）
+  if (exists("plot_and_save")) {
+    plot_and_save(p_three_steps, "doubletfinder_three_steps_overview",
+                  subfolder = "DoubletFinder", width = 12, height = 8)
+  }
 
   # 恢复之前移除的复杂类型列（如果有的话）
   if (length(problematic_cols) > 0) {
@@ -1327,6 +1558,10 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
 ## 6.2 执行双细胞检测
 
 ```{r doublet_detection, fig.width=14, fig.height=10}
+################################################################################
+##################### 执行 DoubletFinder 双细胞检测 ##############################
+################################################################################
+
 doublet_result <- load_or_compute(
   cache_file = paste0(config$cache_prefix, "_05_doublet_detected.rds"),
   description = paste0("DoubletFinder - ", config$cache_prefix),
@@ -1340,14 +1575,112 @@ doublet_result <- load_or_compute(
 
 seurat_obj <- doublet_result
 
+# ==================== 重新生成三步概览图 ====================
+# 说明：如果从缓存读取，runDoubletFinder 不会执行，图片不会显示
+# 因此这里重新生成并保存概览图
+# 如果 @misc 中保存了 pK sweep 结果，则生成完整的三步图
+
+cat("\n正在生成 DoubletFinder 概览图...\n")
+
+# 定义 doublet 颜色方案
+doublet_cols <- c(
+  "High Confidence"          = "#E41A1C",
+  "High Confidence adjusted" = "#FB9A99",
+  "Low Confidence"           = "#33A02C",
+  "Low Confidence adjusted"  = "#B2DF8A",
+  "Singlet"                  = "#E6E6E6"
+)
+
+# 检查是否有保存的 pK sweep 结果
+has_pk_data <- !is.null(seurat_obj@misc$doubletfinder_pk_sweep)
+
+if (has_pk_data) {
+  cat("  ✓ 检测到保存的 pK sweep 结果，生成完整三步图\n")
+
+  # Step 1: pK Selection
+  bcmvn <- seurat_obj@misc$doubletfinder_pk_sweep
+  pKValue <- seurat_obj@misc$doubletfinder_pk_value
+
+  p_pk <- ggplot(bcmvn, aes(x = as.numeric(as.character(pK)), y = BCmetric)) +
+    geom_line() + geom_point() +
+    geom_vline(xintercept = pKValue, color = "red", linetype = "dashed") +
+    labs(title = "Step 1: pK Selection",
+         subtitle = paste0("Optimal pK: ", round(pKValue, 3)),
+         x = "pK", y = "BCmetric") +
+    theme_minimal()
+
+  # Step 2: Doublet 空间分布
+  p_umap <- DimPlot(seurat_obj, group.by = "DFPrediction", pt.size = 0.5) +
+    scale_color_manual(values = doublet_cols, na.value = "grey90") +
+    labs(title = "Step 2: Doublet Spatial Distribution") +
+    theme(legend.position = "right")
+
+  # Step 3: QC 验证
+  p_qc <- FeatureScatter(seurat_obj,
+                         feature1 = "nCount_RNA",
+                         feature2 = "percent.mito",
+                         group.by = "DFPrediction",
+                         pt.size = 0.8) +
+    scale_color_manual(values = doublet_cols, na.value = "grey90") +
+    labs(title = "Step 3: QC Verification") +
+    theme(legend.position = "right")
+
+  # 组合三步图（2x2 布局）
+  p_overview <- (p_pk | p_umap) / (plot_spacer() | p_qc) +
+    plot_layout(heights = c(1, 1)) +
+    plot_annotation(
+      title = "DoubletFinder Three-Step Overview",
+      subtitle = paste0("Total cells: ", ncol(seurat_obj)),
+      theme = theme(plot.title = element_text(size = 16, face = "bold"))
+    )
+
+  print(p_overview)
+
+  # 保存完整三步图
+  plot_and_save(p_overview, "doubletfinder_three_steps_overview",
+                subfolder = "DoubletFinder", width = 14, height = 10)
+
+} else {
+  cat("  ⚠️  未找到 pK sweep 结果（旧版本缓存），生成简化版两步图\n")
+
+  # Step 2: Doublet 空间分布
+  p_umap_overview <- DimPlot(seurat_obj, group.by = "DFPrediction", pt.size = 0.5) +
+    scale_color_manual(values = doublet_cols, na.value = "grey90") +
+    labs(title = "Step 2: Doublet Spatial Distribution",
+         subtitle = paste0("Total cells: ", ncol(seurat_obj))) +
+    theme(legend.position = "right")
+
+  # Step 3: QC 验证
+  p_qc_overview <- FeatureScatter(seurat_obj,
+                                  feature1 = "nCount_RNA",
+                                  feature2 = "percent.mito",
+                                  group.by = "DFPrediction",
+                                  pt.size = 0.8) +
+    scale_color_manual(values = doublet_cols, na.value = "grey90") +
+    labs(title = "Step 3: QC Verification",
+         subtitle = "Doublets vs QC metrics") +
+    theme(legend.position = "right")
+
+  # 组合两步图
+  p_overview <- p_umap_overview + p_qc_overview + plot_layout(ncol = 2)
+  print(p_overview)
+
+  # 保存两步图
+  plot_and_save(p_overview, "doubletfinder_overview_step2_step3",
+                subfolder = "DoubletFinder", width = 14, height = 6)
+}
+
 # ✅ 保留所有 DoubletFinder 结果列（pANN, DF.classifications, DFPrediction）
 # 这些列在后续分析中很有用：
 # - 可以在聚类后检查某个 cluster 是否富集 doublets
 # - 可以调整阈值重新分类，而不需要重新运行 DoubletFinder
 # - 可以用不同的过滤策略（如只删除 High Confidence doublets）
 
-cat("\n✓ DoubletFinder 检测完成\n")
-cat("\n双细胞检测结果:\n")
+cat("\n", strrep("=", 80), "\n")
+cat("✓ DoubletFinder 检测完成\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("双细胞检测结果:\n")
 print(table(seurat_obj$DFPrediction))
 
 # 详细统计信息
@@ -1360,20 +1693,337 @@ cat("\n细胞分类统计:\n")
 cat("  总细胞数:", n_total, "\n")
 cat("  Singlet:", n_singlet, sprintf("(%.1f%%)", 100*n_singlet/n_total), "\n")
 cat("  Low Confidence Doublet:", n_low_conf, sprintf("(%.1f%%)", 100*n_low_conf/n_total), "\n")
-cat("  High Confidence Doublet:", n_high_conf, sprintf("(%.1f%%)", 100*n_high_conf/n_total), "\n")
+cat("  High Confidence Doublet:", n_high_conf, sprintf("(%.1f%%)", 100*n_high_conf/n_total), "\n\n")
 
-cat("\n⚠️  重要说明:\n")
+cat("⚠️  重要说明:\n")
 cat("   - Doublet 标签已保存在 seurat_obj$DFPrediction 列\n")
 cat("   - 所有细胞（包括 doublets）均保留在对象中\n")
-cat("   - 建议先完成聚类分析，观察 doublet 分布后再决定是否过滤\n")
-cat("   - 如需过滤 doublets，请运行下方的【6.3 可选代码块】\n\n")
+cat("   - 请查看下方【6.3 DoubletFinder 质控验证】了解详细验证结果\n")
+cat("   - 如需过滤 doublets，请在验证后运行【6.4 可选代码块】\n\n")
 
 # 继续使用包含所有细胞的对象（不创建 seurat_obj_clean）
 rm(doublet_result)
 gc()
 ```
 
-## 6.3 可选：过滤双细胞 (Optional - eval=FALSE)
+## 6.3 DoubletFinder 质控验证 (QC Validation)
+
+> **为什么需要质控验证？**
+>
+> DoubletFinder 是一个基于统计模型的预测工具，而非100%准确的"真相"。某些生物学状态的细胞（如增殖细胞、高转录活性细胞）可能被误判为doublets。因此，在物理删除这些细胞前，必须通过三个独立验证来确认预测的合理性：
+>
+> 1. **数量合理性**：预测的doublet比例是否符合预期（通常1-10%）？
+> 2. **空间分布合理性**：doublets是否位于细胞类型交界处（合理），还是形成独立的cluster（可疑）？
+> 3. **分子特征合理性**：doublets是否富集线粒体/核糖体基因或同时表达互斥markers（支持doublet假说）？
+>
+> **如何解读结果？**
+>
+> 本节将生成一份综合质控报告，包含柱状图、UMAP分布图和特征基因热图。您应该综合判断这些证据，而不是仅依赖某一个指标。
+
+```{r doublet_qc_validation, fig.width=16, fig.height=12}
+################################################################################
+##################### DoubletFinder 质控验证 #####################################
+################################################################################
+#
+# 【功能说明】
+# 本代码块执行三个独立的质控验证，确保 DoubletFinder 的预测是可靠的
+#
+# 【代码结构】
+# 验证1：细胞数量统计（检查 doublet 比例是否合理）
+# 验证2：UMAP 空间分布（检查 doublets 是否位于细胞类型交界处）
+# 验证3：特征基因分析（检查 doublets 是否富集 MT/Ribo 基因或互斥 markers）
+#
+# 【输出文件】
+# - doublet_validation_summary.png/pdf（综合质控报告，6个子图）
+# - doublet_barplot.png/pdf（细胞分类柱状图）
+# - doublet_umap_distribution.png/pdf（UMAP 分布图）
+# - doublet_markers_heatmap.png/pdf（特征基因热图）
+#
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("📊 DoubletFinder 质控验证\n")
+cat(strrep("=", 80), "\n\n")
+
+# ==================== 验证1：细胞数量变化 ====================
+# 目的：检查预测的 doublet 比例是否合理
+# 正常范围：1-10%（取决于上样浓度和实验平台）
+# 如果比例异常高（>15%），可能需要调整 DoubletFinder 参数
+
+cat("【验证 1】细胞分类统计\n")
+cat("   目的：检查 doublet 比例是否在合理范围（通常 1-10%）\n\n")
+
+# 统计各类细胞数量
+# 注意：我们将 Low/High Confidence 和 adjusted 版本合并统计
+doublet_stats <- data.frame(
+  Category = c("Singlet", "Low Confidence", "High Confidence"),
+  Count = c(
+    sum(seurat_obj$DFPrediction == "Singlet", na.rm = TRUE),
+    sum(seurat_obj$DFPrediction %in% c("Low Confidence", "Low Confidence adjusted"), na.rm = TRUE),
+    sum(seurat_obj$DFPrediction %in% c("High Confidence", "High Confidence adjusted"), na.rm = TRUE)
+  )
+)
+
+# 计算百分比
+doublet_stats$Percentage <- round(100 * doublet_stats$Count / sum(doublet_stats$Count), 2)
+
+# 打印统计表
+print(doublet_stats)
+
+# 绘制柱状图
+# 颜色方案：灰色（Singlet）、橙色（Low Confidence）、红色（High Confidence）
+p_barplot <- ggplot(doublet_stats, aes(x = Category, y = Count, fill = Category)) +
+  geom_bar(stat = "identity") +
+  # 在柱子上方显示数量和百分比
+  geom_text(aes(label = paste0(Count, " (", Percentage, "%)")), vjust = -0.5, size = 4) +
+  scale_fill_manual(values = c("Singlet" = "#E6E6E6",
+                                "Low Confidence" = "#FFA500",
+                                "High Confidence" = "#E41A1C")) +
+  labs(title = "Validation 1: Cell Classification Summary",
+       subtitle = "Check if doublet rate is within expected range (1-10%)",
+       x = "Category", y = "Cell Count") +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none")
+
+# 保存柱状图
+plot_and_save(p_barplot, "doublet_barplot", subfolder = "DoubletFinder",
+              width = 8, height = 6)
+
+# ==================== 验证2：UMAP 空间分布 ====================
+# 目的：检查 doublets 在转录组空间中的分布模式
+#
+# 【合理分布】doublets 主要位于细胞类型交界处（边界区域）
+#   - 原因：两个不同类型的细胞融合，转录组介于两者之间
+#   - 在 UMAP 上表现为分散在不同 cluster 的交界处
+#
+# 【可疑分布】整簇独立的细胞被标记为 doublet
+#   - 可能是增殖细胞（高 RNA 含量，表达 Mki67, Top2a）
+#   - 可能是某些特殊细胞类型（如浆细胞，天然高 RNA 含量）
+#   - 建议保留这些细胞，进一步分析后再决定
+
+cat("\n【验证 2】Doublets 在 UMAP 上的空间分布\n")
+cat("   检查要点：\n")
+cat("   ✅ 好的迹象：Doublets 分散在细胞类型交界处\n")
+cat("   ⚠️  需警惕：整簇独立的细胞被标记（可能是增殖细胞或高 RNA 含量细胞）\n\n")
+
+# 图A：显示所有细胞，按 DFPrediction 分类着色
+# 用途：整体观察 doublet 的空间分布模式
+p_umap_doublet <- DimPlot(seurat_obj, group.by = "DFPrediction", pt.size = 0.5) +
+  scale_color_manual(values = c(
+    "Singlet" = "lightgrey",
+    "Low Confidence" = "#FFA500",
+    "Low Confidence adjusted" = "#FFD700",
+    "High Confidence" = "#E41A1C",
+    "High Confidence adjusted" = "#FF6347"
+  )) +
+  labs(title = "Validation 2a: Doublet Distribution on UMAP",
+       subtitle = "All cells colored by DoubletFinder prediction") +
+  theme(legend.position = "right")
+
+# 保存 UMAP 分布图（全部细胞）
+plot_and_save(p_umap_doublet, "doublet_umap_all_cells", subfolder = "DoubletFinder",
+              width = 10, height = 8)
+
+# 图B：仅高亮显示 Doublets
+# 用途：更清晰地看到 doublet 的位置
+doublet_cells <- colnames(seurat_obj)[seurat_obj$DFPrediction != "Singlet"]
+p_umap_doublet_only <- DimPlot(seurat_obj, cells.highlight = doublet_cells,
+                               cols.highlight = "red", cols = "lightgrey",
+                               pt.size = 0.5) +
+  labs(title = "Validation 2b: Doublets Only (Highlighted)",
+       subtitle = paste0("Highlighted: ", length(doublet_cells), " doublets")) +
+  NoLegend()
+
+# 保存 UMAP 分布图（仅 doublets）
+plot_and_save(p_umap_doublet_only, "doublet_umap_highlighted", subfolder = "DoubletFinder",
+              width = 10, height = 8)
+
+# ==================== 验证3：特征基因分析 ====================
+# 目的：从分子层面验证 doublet 预测的合理性
+#
+# 【预期特征】
+# 1. 富集线粒体基因（MT-CO1, MT-ND1 等）
+#    - 原因：两个细胞融合导致细胞质体积增大，线粒体相对富集
+# 2. 富集核糖体基因（RPL3, RPS4 等）
+#    - 原因：高转录活性，或者两个细胞的核糖体累加
+# 3. 同时高表达互斥的 lineage markers
+#    - 例如：Cd3e（T细胞）+ Cd19（B细胞）
+#    - 例如：Xcr1（cDC1）+ Sirpa（cDC2）
+#
+# 【参数说明】
+# - logfc.threshold = 0.25：只保留 log2FC > 0.25 的基因（约1.2倍差异）
+#   选择理由：doublet 的分子特征通常不会有极高的倍数变化
+# - min.pct = 0.1：基因至少在 10% 的细胞中表达
+#   选择理由：排除极低表达的噪音基因
+
+cat("【验证 3】Doublets 的特征基因分析\n")
+cat("   检查要点：\n")
+cat("   ✅ 支持 doublet 假说：\n")
+cat("      - 富集线粒体基因（MT-CO1, MT-ND1 等）\n")
+cat("      - 富集核糖体基因（RPL3, RPS4 等）\n")
+cat("      - 同时高表达互斥 markers（如 Cd3e + Cd19）\n")
+cat("   ⚠️  需要重新评估：\n")
+cat("      - 主要富集增殖基因（Mki67, Top2a）\n")
+cat("      - 富集某种细胞类型的 specific markers\n\n")
+
+# 为 FindMarkers 准备分组
+# 将 High Confidence doublets 作为实验组，Singlets 作为对照组
+seurat_obj$is_doublet <- ifelse(
+  seurat_obj$DFPrediction %in% c("High Confidence", "High Confidence adjusted"),
+  "Doublet", "Singlet"
+)
+
+# 运行差异表达分析
+# 使用 SCT assay（已归一化和方差稳定化处理）
+doublet_markers <- FindMarkers(
+  seurat_obj,
+  ident.1 = "Doublet",           # 实验组：High Confidence doublets
+  ident.2 = "Singlet",            # 对照组：Singlets
+  group.by = "is_doublet",
+  assay = "SCT",
+  logfc.threshold = 0.25,         # 阈值选择：1.2倍差异（2^0.25 ≈ 1.19）
+  min.pct = 0.1,                  # 至少在 10% 细胞中表达
+  verbose = FALSE
+)
+
+# 提取 Top 20 上调基因
+top_doublet_genes <- doublet_markers %>%
+  filter(avg_log2FC > 0) %>%       # 只看上调基因
+  arrange(desc(avg_log2FC)) %>%     # 按 log2FC 降序排列
+  head(20)
+
+cat("Top 20 上调基因（Doublet vs Singlet）:\n")
+print(top_doublet_genes[, c("avg_log2FC", "pct.1", "pct.2", "p_val_adj")])
+
+# 检查是否富集线粒体/核糖体基因
+mt_genes <- grep("^MT-|^mt-", rownames(top_doublet_genes), value = TRUE, ignore.case = TRUE)
+ribo_genes <- grep("^RPL|^RPS|^Rpl|^Rps", rownames(top_doublet_genes), value = TRUE)
+
+cat("\n【分子特征总结】\n")
+cat("  线粒体基因:", length(mt_genes), "个")
+if (length(mt_genes) > 0) cat(" -", paste(mt_genes, collapse = ", "))
+cat("\n  核糖体基因:", length(ribo_genes), "个")
+if (length(ribo_genes) > 0) cat(" -", paste(ribo_genes, collapse = ", "))
+cat("\n")
+
+# 可视化：Doublet 特征基因的表达
+# 优先展示 QC 基因（线粒体、核糖体）和 lineage markers
+genes_to_plot <- c()
+
+# 策略1：优先使用 QC 基因（如果 top genes 中包含）
+if (length(mt_genes) > 0 | length(ribo_genes) > 0) {
+  qc_genes_in_top <- c(mt_genes, ribo_genes)
+  genes_to_plot <- c(genes_to_plot, qc_genes_in_top)
+}
+
+# 策略2：补充 lineage markers（检查互斥表达）
+# 使用 Section 1.4 中定义的 genes_lineage
+lineage_in_top <- intersect(genes_lineage, rownames(top_doublet_genes))
+if (length(lineage_in_top) > 0) {
+  genes_to_plot <- c(genes_to_plot, lineage_in_top)
+}
+
+# 策略3：如果还不够 9 个基因，用 top genes 补充
+if (length(genes_to_plot) < 9) {
+  remaining_genes <- setdiff(rownames(top_doublet_genes), genes_to_plot)
+  genes_to_plot <- c(genes_to_plot, remaining_genes[1:(9 - length(genes_to_plot))])
+}
+
+# 最终只取前 9 个（3x3 布局）
+genes_to_plot <- genes_to_plot[1:min(9, length(genes_to_plot))]
+
+cat("\n【可视化基因】（从 Section 1.4 基因库和 top markers 中自动选择）:\n")
+cat(" ", paste(genes_to_plot, collapse = ", "), "\n")
+
+# 生成 FeaturePlot
+p_feature <- FeaturePlot(seurat_obj, features = genes_to_plot,
+                        ncol = 3, pt.size = 0.3) +
+  plot_annotation(title = "Validation 3: Doublet Feature Genes",
+                  subtitle = "Expression of marker genes enriched in doublets")
+
+# 保存特征基因图
+plot_and_save(p_feature, "doublet_feature_genes", subfolder = "DoubletFinder",
+              width = 12, height = 12)
+
+# ==================== 组合图表 ====================
+# 将三个验证的关键图表组合成一份综合报告
+# 布局：上半部分（数量统计 + UMAP 分布 x2），下半部分（特征基因 3x3）
+
+cat("\n正在生成综合质控报告...\n")
+
+# 上半部分：数量统计 + UMAP 分布
+p_top <- p_barplot | p_umap_doublet | p_umap_doublet_only
+
+# 下半部分：特征基因表达
+p_bottom <- p_feature
+
+# 组合（上下比例 1:1.5，因为下半部分是 3x3 的子图）
+p_validation <- p_top / p_bottom +
+  plot_layout(heights = c(1, 1.5)) +
+  plot_annotation(
+    title = "DoubletFinder Quality Control Validation Report",
+    subtitle = paste0("Dataset: ", config$project_name, " | Total cells: ", ncol(seurat_obj)),
+    theme = theme(plot.title = element_text(size = 18, face = "bold"))
+  )
+
+# 保存综合报告
+plot_and_save(p_validation, "doublet_validation_summary", subfolder = "DoubletFinder",
+              width = 18, height = 14)
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ DoubletFinder 质控验证完成\n")
+cat(strrep("=", 80), "\n\n")
+
+# ==================== 验证结论指南 ====================
+cat("📋 如何解读验证结果？\n\n")
+
+cat("【验证1：数量合理性】\n")
+cat("  ✅ 正常：Doublet 比例在 1-10% 之间\n")
+cat("     - 这是基于上样浓度和实验平台的合理范围\n")
+cat("  ⚠️  异常：Doublet 比例 > 15%\n")
+cat("     - 可能原因：上样浓度过高、实验操作问题\n")
+cat("     - 建议：检查实验记录，或调整 DoubletFinder 参数\n\n")
+
+cat("【验证2：空间分布合理性】（最关键的验证！）\n")
+cat("  ✅ 支持 doublet 假说：\n")
+cat("     - Doublets 主要分散在细胞类型交界处\n")
+cat("     - 没有形成独立的 cluster\n")
+cat("  ⚠️  需要重新评估：\n")
+cat("     - 整簇独立的细胞被标记为 doublet\n")
+cat("     - 可能是增殖细胞（检查 Mki67, Top2a 表达）\n")
+cat("     - 可能是高 RNA 含量细胞（如浆细胞）\n")
+cat("     - 建议：保留这些细胞，完成聚类后再分析\n\n")
+
+cat("【验证3：分子特征合理性】\n")
+cat("  ✅ 支持 doublet 假说：\n")
+cat("     - 富集线粒体基因（MT-CO1, MT-ND1 等）\n")
+cat("     - 富集核糖体基因（RPL3, RPS4 等）\n")
+cat("     - 同时表达互斥 markers（如 Cd3e + Cd19, Xcr1 + Sirpa）\n")
+cat("  ⚠️  需要重新评估：\n")
+cat("     - 主要富集增殖基因 → 可能是增殖细胞\n")
+cat("     - 富集某种细胞类型的 specific markers → 可能是真实细胞类型\n\n")
+
+cat("【综合判断建议】\n")
+cat("  1. 如果三个验证都支持 doublet 假说 → 可以安全删除\n")
+cat("  2. 如果任何一个验证出现可疑信号 → 建议保留，进一步分析\n")
+cat("  3. 记住：删除细胞是不可逆的，保守策略更安全\n\n")
+```
+
+> **🔍 结果解读示例**
+>
+> **情况1：理想的 doublet 检测结果**
+> - 验证1：Doublet 比例 5.2%（正常）
+> - 验证2：Doublets 分散在 T-B 交界、DC-Macrophage 交界处
+> - 验证3：富集 MT-CO1, MT-ND2, RPL3, RPS4，同时表达 Cd3e + Cd19
+> - **结论**：可以安全删除这些 doublets
+>
+> **情况2：可疑的 doublet 检测结果**
+> - 验证1：Doublet 比例 8.3%（正常）
+> - 验证2：在 UMAP 右上角形成一个独立的 cluster（⚠️）
+> - 验证3：主要富集 Mki67, Top2a, Pcna（增殖基因，而非 MT/Ribo 基因）
+> - **结论**：这可能是增殖细胞，建议保留，完成聚类后再决定
+
+## 6.4 可选：过滤双细胞 (Optional - eval=FALSE)
 
 ```{r filter_doublets, eval=FALSE}
 ################################################################################
@@ -1419,14 +2069,14 @@ cat("  过滤后:", ncol(seurat_obj_clean), "个细胞\n")
 cat("  移除:", ncol(seurat_obj) - ncol(seurat_obj_clean), "个细胞\n\n")
 ```
 
-## 6.4 确定后续分析使用的对象
+## 6.5 确定后续分析使用的对象
 
 ```{r set_analysis_object}
 ################################################################################
 ##################### 选择分析对象 ##############################################
 ################################################################################
 #
-# 根据是否运行了过滤代码块（6.3），自动选择使用的对象：
+# 根据是否运行了过滤代码块（6.4），自动选择使用的对象：
 # - 如果未过滤：使用 seurat_obj（包含所有细胞）
 # - 如果已过滤：使用 seurat_obj_clean（仅包含 Singlets）
 #
@@ -1457,159 +2107,6 @@ if (exists("seurat_obj_clean")) {
 # 为了向后兼容，将 seurat_final 赋值给 seurat_obj_clean
 # 这样后续代码无需修改
 seurat_obj_clean <- seurat_final
-```
-
-## 6.5 DoubletFinder 质控验证 (QC Validation)
-
-```{r doublet_qc_validation, fig.width=16, fig.height=12}
-################################################################################
-##################### DoubletFinder 质控验证 #####################################
-################################################################################
-#
-# 重要性：验证 DoubletFinder 的预测是合理的，而不是误删生物学相关细胞
-#
-# 三个关键验证：
-# 1. 细胞数量变化
-# 2. Doublets 在 UMAP 上的空间分布
-# 3. Doublets 的特征基因分析
-#
-################################################################################
-
-cat("\n", strrep("=", 80), "\n")
-cat("📊 DoubletFinder 质控验证\n")
-cat(strrep("=", 80), "\n\n")
-
-# ==================== 验证1：细胞数量变化 ====================
-
-cat("【验证 1】细胞分类统计\n")
-
-# 统计各类细胞数量
-doublet_stats <- data.frame(
-  Category = c("Singlet", "Low Confidence", "High Confidence"),
-  Count = c(
-    sum(seurat_obj$DFPrediction == "Singlet", na.rm = TRUE),
-    sum(seurat_obj$DFPrediction %in% c("Low Confidence", "Low Confidence adjusted"), na.rm = TRUE),
-    sum(seurat_obj$DFPrediction %in% c("High Confidence", "High Confidence adjusted"), na.rm = TRUE)
-  )
-)
-
-doublet_stats$Percentage <- round(100 * doublet_stats$Count / sum(doublet_stats$Count), 2)
-
-print(doublet_stats)
-
-# 绘制柱状图
-p_barplot <- ggplot(doublet_stats, aes(x = Category, y = Count, fill = Category)) +
-  geom_bar(stat = "identity") +
-  geom_text(aes(label = paste0(Count, " (", Percentage, "%)")), vjust = -0.5) +
-  scale_fill_manual(values = c("Singlet" = "#E6E6E6",
-                                "Low Confidence" = "#FFA500",
-                                "High Confidence" = "#E41A1C")) +
-  labs(title = "Validation 1: Cell Classification Summary",
-       x = "Category", y = "Cell Count") +
-  theme_minimal(base_size = 14) +
-  theme(legend.position = "none")
-
-# ==================== 验证2：UMAP 空间分布 ====================
-
-cat("\n【验证 2】Doublets 在 UMAP 上的空间分布\n")
-cat("   检查要点：\n")
-cat("   - Doublets 是否聚集在细胞类型交界处？（合理）\n")
-cat("   - 是否有整簇独立的细胞被标记？（需警惕，可能是高 RNA 含量的增殖细胞）\n\n")
-
-# UMAP：显示所有细胞，按 DFPrediction 着色
-p_umap_doublet <- DimPlot(seurat_obj, group.by = "DFPrediction", pt.size = 0.5) +
-  scale_color_manual(values = c(
-    "Singlet" = "lightgrey",
-    "Low Confidence" = "#FFA500",
-    "Low Confidence adjusted" = "#FFD700",
-    "High Confidence" = "#E41A1C",
-    "High Confidence adjusted" = "#FF6347"
-  )) +
-  labs(title = "Validation 2a: Doublet Distribution on UMAP") +
-  theme(legend.position = "right")
-
-# UMAP：仅显示 Doublets
-doublet_cells <- colnames(seurat_obj)[seurat_obj$DFPrediction != "Singlet"]
-p_umap_doublet_only <- DimPlot(seurat_obj, cells.highlight = doublet_cells,
-                               cols.highlight = "red", cols = "lightgrey",
-                               pt.size = 0.5) +
-  labs(title = "Validation 2b: Doublets Only (Highlighted)") +
-  NoLegend()
-
-# ==================== 验证3：特征基因分析 ====================
-
-cat("【验证 3】Doublets 的特征基因\n")
-cat("   检查要点：\n")
-cat("   - 是否富集线粒体/核糖体基因？\n")
-cat("   - 是否同时高表达两种互斥的 lineage markers？\n")
-cat("     例如：CD3（T细胞）+ CD19（B细胞）\n\n")
-
-# 为 FindMarkers 准备分组
-seurat_obj$is_doublet <- ifelse(
-  seurat_obj$DFPrediction %in% c("High Confidence", "High Confidence adjusted"),
-  "Doublet", "Singlet"
-)
-
-# 运行差异分析
-doublet_markers <- FindMarkers(
-  seurat_obj,
-  ident.1 = "Doublet",
-  ident.2 = "Singlet",
-  group.by = "is_doublet",
-  assay = "SCT",
-  logfc.threshold = 0.25,
-  min.pct = 0.1,
-  verbose = FALSE
-)
-
-# Top 上调基因
-top_doublet_genes <- doublet_markers %>%
-  filter(avg_log2FC > 0) %>%
-  arrange(desc(avg_log2FC)) %>%
-  head(20)
-
-cat("Top 20 上调基因（Doublet vs Singlet）:\n")
-print(top_doublet_genes[, c("avg_log2FC", "pct.1", "pct.2", "p_val_adj")])
-
-# 检查是否富集线粒体/核糖体基因
-mt_genes <- grep("^MT-|^mt-", rownames(top_doublet_genes), value = TRUE, ignore.case = TRUE)
-ribo_genes <- grep("^RPL|^RPS|^Rpl|^Rps", rownames(top_doublet_genes), value = TRUE)
-
-cat("\n线粒体基因:", length(mt_genes), "个 -", paste(mt_genes, collapse = ", "))
-cat("\n核糖体基因:", length(ribo_genes), "个 -", paste(ribo_genes, collapse = ", "), "\n")
-
-# 可视化：Doublet 特征基因的表达
-genes_to_plot <- rownames(top_doublet_genes)[1:min(9, nrow(top_doublet_genes))]
-p_feature <- FeaturePlot(seurat_obj, features = genes_to_plot, ncol = 3, pt.size = 0.3)
-
-# ==================== 组合图表 ====================
-
-cat("\n正在生成综合质控报告...\n")
-
-# 上半部分：数量统计 + UMAP 分布
-p_top <- p_barplot | p_umap_doublet | p_umap_doublet_only
-
-# 下半部分：特征基因表达
-p_bottom <- p_feature
-
-# 组合
-p_validation <- p_top / p_bottom + plot_layout(heights = c(1, 1.5))
-
-print(p_validation)
-
-cat("\n", strrep("=", 80), "\n")
-cat("✓ DoubletFinder 质控验证完成\n")
-cat(strrep("=", 80), "\n\n")
-
-cat("📋 验证结论指南：\n")
-cat("  ✅ 好的迹象：\n")
-cat("     - Doublets 主要在细胞类型交界处\n")
-cat("     - 富集线粒体/核糖体基因\n")
-cat("     - 同时表达互斥 markers (如 CD3 + CD19)\n\n")
-cat("  ⚠️  需要警惕：\n")
-cat("     - 整簇独立的细胞被标记为 doublet\n")
-cat("     - 可能是增殖细胞或某些高 RNA 含量的特殊细胞类型\n")
-cat("     - 建议保留这些细胞，进一步分析后再决定\n\n")
 ```
 
 ---
@@ -1650,34 +2147,181 @@ cat("\n✓ 差异基因列表已保存:", deg_csv, "\n\n")
 
 ## 7.1 差异基因可视化
 
-```{r deg_visualization, fig.width=10, fig.height=8}
-# 气泡图
-genes_to_plot <- unique(top5_markers$gene[1:min(15, nrow(top5_markers))])
+> **如何解读差异基因分析结果？**
+>
+> 差异基因分析（DEG）通过比较不同cluster之间的基因表达，帮助我们理解：
+> 1. **细胞类型鉴定**：每个cluster的marker基因是什么？
+> 2. **功能状态**：cluster之间的功能差异（如增殖、活化、成熟）
+> 3. **质量控制**：是否存在技术性cluster（如高线粒体cluster）
+>
+> **三种互补的可视化方法**：
+> - **DotPlot（气泡图）**：同时展示表达比例和表达强度，适合比较多个marker
+> - **Heatmap（热图）**：展示基因表达的整体模式，识别共表达基因群
+> - **FeaturePlot（特征图）**：展示marker在UMAP上的空间分布，验证cluster特异性
 
-p_dot <- DotPlot(seurat_obj_clean, features = genes_to_plot, assay = "SCT") +
+```{r deg_visualization, fig.width=14, fig.height=10}
+################################################################################
+##################### 差异基因可视化 ##############################################
+################################################################################
+#
+# 【功能说明】
+# 使用三种互补的方法可视化差异表达基因，帮助鉴定细胞类型和功能状态
+#
+# 【可视化策略】
+# 策略1：优先使用 Section 1.4 中定义的 marker 基因（如果在 top markers 中）
+# 策略2：补充 top DEG markers（数据驱动的发现）
+# 策略3：根据 analysis_mode 自动选择相关基因
+#
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("📊 差异基因可视化\n")
+cat(strrep("=", 80), "\n\n")
+
+# ==================== 智能基因选择 ====================
+# 策略：优先使用预定义的 marker 基因（Section 1.4），补充 top DEG
+
+# 提取 top DEG markers
+top_deg_genes <- unique(top5_markers$gene)
+
+# 根据 analysis_mode 选择基因
+genes_for_dotplot <- c()
+genes_for_heatmap <- c()
+genes_for_featureplot <- c()
+
+if (analysis_mode == "cDC1") {
+  # cDC1 模式：重点展示 cDC1 markers 和成熟相关基因
+  genes_for_dotplot <- unique(c(genes_cDC1, genes_maturation,
+                                intersect(top_deg_genes, genes_cDC2)))  # 也展示部分 cDC2 对比
+  genes_for_featureplot <- genes_cDC1[1:min(6, length(genes_cDC1))]
+} else if (analysis_mode == "cDC2") {
+  # cDC2 模式：重点展示 cDC2 markers 和成熟相关基因
+  genes_for_dotplot <- unique(c(genes_cDC2, genes_maturation,
+                                intersect(top_deg_genes, genes_cDC1)))
+  genes_for_featureplot <- genes_cDC2[1:min(6, length(genes_cDC2))]
+} else if (analysis_mode == "integrated") {
+  # 整合模式：展示 cDC1, cDC2, 成熟基因
+  genes_for_dotplot <- unique(c(genes_cDC1, genes_cDC2, genes_maturation))
+  genes_for_featureplot <- unique(c(genes_cDC1[1:3], genes_cDC2[1:3]))
+} else if (analysis_mode == "full") {
+  # 全量模式：展示 lineage markers 和功能基因
+  genes_for_dotplot <- unique(c(genes_lineage, genes_functional))
+  genes_for_featureplot <- genes_lineage[1:min(6, length(genes_lineage))]
+}
+
+# 补充 top DEG（如果预定义基因不够）
+if (length(genes_for_dotplot) < 15) {
+  additional_genes <- setdiff(top_deg_genes, genes_for_dotplot)
+  genes_for_dotplot <- c(genes_for_dotplot, additional_genes[1:min(15 - length(genes_for_dotplot), length(additional_genes))])
+}
+
+# 热图使用前 30 个 top DEG（展示整体模式）
+genes_for_heatmap <- top_deg_genes[1:min(30, length(top_deg_genes))]
+
+# 只保留实际存在的基因
+genes_for_dotplot <- intersect(genes_for_dotplot, rownames(seurat_obj_clean))
+genes_for_heatmap <- intersect(genes_for_heatmap, rownames(seurat_obj_clean))
+genes_for_featureplot <- intersect(genes_for_featureplot, rownames(seurat_obj_clean))
+
+cat("【可视化基因选择】\n")
+cat("  DotPlot:", length(genes_for_dotplot), "个基因 -", paste(head(genes_for_dotplot, 10), collapse = ", "), "...\n")
+cat("  Heatmap:", length(genes_for_heatmap), "个基因\n")
+cat("  FeaturePlot:", length(genes_for_featureplot), "个基因 -", paste(genes_for_featureplot, collapse = ", "), "\n\n")
+
+# ==================== 可视化1：DotPlot（气泡图）====================
+# 用途：同时展示基因的表达比例（点大小）和表达强度（颜色）
+# 解读：
+#   - 大而红的点：该基因在该 cluster 中高表达且表达细胞比例高（理想 marker）
+#   - 大而蓝的点：虽然很多细胞表达，但表达强度低
+#   - 小点：表达细胞比例低
+
+cat("【可视化 1】DotPlot - 同时展示表达比例和强度\n")
+
+p_dot <- DotPlot(seurat_obj_clean, features = genes_for_dotplot, assay = "SCT") +
   RotatedAxis() +
   scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
-  labs(title = "Top Markers Expression")
-print(p_dot)
+  labs(title = "Marker Expression across Clusters",
+       subtitle = paste0("Dot size = % expressing | Color = expression level"),
+       x = "Marker Genes", y = "Clusters") +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
 
-# 热图
-seurat_obj_clean <- ScaleData(seurat_obj_clean, features = top5_markers$gene, verbose = FALSE)
+# 保存 DotPlot
+plot_and_save(p_dot, "deg_dotplot_markers", subfolder = "DEG",
+              width = max(12, length(genes_for_dotplot) * 0.4), height = 8)
 
-p_heat <- DoHeatmap(seurat_obj_clean, features = top5_markers$gene) +
-  NoLegend() +
-  scale_fill_gradientn(colors = c("blue", "white", "red"))
-print(p_heat)
+# ==================== 可视化2：Heatmap（热图）====================
+# 用途：展示基因表达的整体模式，识别共表达基因群
+# 解读：
+#   - 垂直条纹：某个 cluster 特异性高表达一组基因
+#   - 水平条纹：某些基因在多个 cluster 中共表达
+#   - 梯度变化：基因表达的连续变化（如成熟过程）
 
-# 关键marker的 FeaturePlot
-if (length(config$key_markers) > 0) {
-  available_markers <- intersect(config$key_markers, rownames(seurat_obj_clean))
-  if (length(available_markers) > 0) {
-    p_feat <- FeaturePlot(seurat_obj_clean, features = available_markers[1:min(6, length(available_markers))],
-                         reduction = "umap", ncol = 3)
-    print(p_feat)
-  }
+cat("\n【可视化 2】Heatmap - 展示基因表达的整体模式\n")
+
+# 需要先对基因进行 ScaleData（Z-score 标准化）
+seurat_obj_clean <- ScaleData(seurat_obj_clean, features = genes_for_heatmap, verbose = FALSE)
+
+p_heat <- DoHeatmap(seurat_obj_clean, features = genes_for_heatmap, assay = "SCT") +
+  scale_fill_gradientn(colors = c("blue", "white", "red")) +
+  labs(title = "Top Marker Expression Heatmap",
+       subtitle = paste0("Top ", length(genes_for_heatmap), " DEG genes across clusters")) +
+  theme(axis.text.y = element_text(size = 8))
+
+# 保存 Heatmap
+plot_and_save(p_heat, "deg_heatmap_top_markers", subfolder = "DEG",
+              width = 12, height = max(10, length(genes_for_heatmap) * 0.25))
+
+# ==================== 可视化3：FeaturePlot（特征图）====================
+# 用途：展示 marker 在 UMAP 上的空间分布
+# 解读：
+#   - 如果 marker 仅在某个 cluster 高表达 → cluster 特异性好
+#   - 如果 marker 在多个 cluster 高表达 → 共享的功能状态
+#   - 梯度分布：成熟或功能状态的连续变化
+
+cat("\n【可视化 3】FeaturePlot - 展示 markers 的空间分布\n")
+
+if (length(genes_for_featureplot) > 0) {
+  p_feat <- FeaturePlot(seurat_obj_clean,
+                       features = genes_for_featureplot,
+                       reduction = "umap",
+                       ncol = 3,
+                       pt.size = 0.5) +
+    plot_annotation(title = paste0("Key Marker Expression on UMAP - ", config$project_name),
+                   subtitle = "Expression level shown as color intensity")
+
+  # 保存 FeaturePlot
+  plot_and_save(p_feat, "deg_featureplot_key_markers", subfolder = "DEG",
+                width = 12, height = ceiling(length(genes_for_featureplot) / 3) * 4)
+
+  cat("  ✓ FeaturePlot 包含", length(genes_for_featureplot), "个关键 marker\n")
+} else {
+  cat("  ⚠️  没有可用的 marker 基因用于 FeaturePlot\n")
 }
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 差异基因可视化完成\n")
+cat(strrep("=", 80), "\n\n")
 ```
+
+> **🔍 如何综合解读这三种可视化？**
+>
+> **步骤1：从 DotPlot 识别 cluster 特异性 marker**
+> - 查找每个 cluster 的"大而红"的点
+> - 例如：Cluster 0 高表达 Xcr1, Clec9a → 可能是 cDC1
+>
+> **步骤2：从 Heatmap 识别基因表达模式**
+> - 查找垂直条纹（cluster 特异性）
+> - 查找水平条纹（共享的功能状态）
+> - 例如：Ccr7, Cd83 在多个 cluster 高表达 → 成熟 DC
+>
+> **步骤3：从 FeaturePlot 验证空间分布**
+> - 确认 marker 是否真的局限于某个 cluster
+> - 检查是否有梯度分布（提示连续的生物学过程）
+>
+> **常见模式**：
+> - **清晰的细胞类型**：DotPlot 中每个 cluster 有 3-5 个特异性 marker
+> - **功能状态连续变化**：FeaturePlot 中基因呈梯度分布（如 Ccr7 从低到高）
+> - **技术性 cluster**：Heatmap 中某个 cluster 主要富集线粒体/核糖体基因 → 可能需要删除
 
 ---
 
@@ -1764,6 +2408,20 @@ cat("  WNN 聚类数:", length(unique(seurat_obj_wnn$WNN_clusters)), "\n\n")
 ## 8.1 WNN 可视化对比
 
 ```{r wnn_visualization, fig.width=18, fig.height=6}
+################################################################################
+##################### WNN 多模态聚类对比 ##########################################
+################################################################################
+#
+# 【功能说明】
+# 对比三种聚类策略：ADT 驱动、RNA 驱动、WNN 整合
+#
+# 【解读要点】
+# - ADT-driven: 基于蛋白表达的聚类（分辨率低但更稳定）
+# - RNA-driven: 基于转录组的聚类（分辨率高但受批次影响）
+# - WNN-combined: 整合两者优势的最终聚类
+#
+################################################################################
+
 # 确保有足够的颜色
 n_wnn_clusters <- length(unique(seurat_obj_wnn$WNN_clusters))
 if (is.null(config$colors) || length(config$colors) < n_wnn_clusters) {
@@ -1772,59 +2430,121 @@ if (is.null(config$colors) || length(config$colors) < n_wnn_clusters) {
 
 # 三种驱动方式对比
 p_adt <- DimPlot(seurat_obj_wnn, reduction = "adt_umap", group.by = "ADT_clusters",
-                label = TRUE) + ggtitle("ADT-driven")
+                label = TRUE, label.size = 4) +
+  ggtitle("ADT-driven Clustering") +
+  theme(legend.position = "bottom")
 
 p_rna <- DimPlot(seurat_obj_wnn, reduction = "umap", group.by = "SCT_clusters",
-                label = TRUE) + ggtitle("RNA-driven")
+                label = TRUE, label.size = 4) +
+  ggtitle("RNA-driven Clustering") +
+  theme(legend.position = "bottom")
 
 p_wnn <- DimPlot(seurat_obj_wnn, reduction = "wnn_umap", group.by = "WNN_clusters",
-                label = TRUE, cols = config$colors) + ggtitle("WNN-combined")
+                label = TRUE, label.size = 4, cols = config$colors) +
+  ggtitle("WNN-combined Clustering") +
+  theme(legend.position = "bottom")
 
-print(p_adt + p_rna + p_wnn)
+# 组合并保存
+p_wnn_comparison <- p_adt + p_rna + p_wnn +
+  plot_annotation(title = "WNN Multi-Modal Clustering Comparison",
+                 subtitle = paste0("ADT clusters: ", length(unique(seurat_obj_wnn$ADT_clusters)),
+                                  " | RNA clusters: ", length(unique(seurat_obj_wnn$SCT_clusters)),
+                                  " | WNN clusters: ", n_wnn_clusters))
+
+plot_and_save(p_wnn_comparison, "wnn_clustering_comparison",
+              subfolder = "WNN", width = 18, height = 7)
 ```
 
 ## 8.2 基因 vs 蛋白对比
 
+> **为什么要对比基因和蛋白表达？**
+>
+> CITE-seq 的独特优势是可以同时测量 mRNA（基因）和蛋白表达。理想情况下，基因和蛋白表达应该高度一致，但也可能出现差异：
+> - **转录后调控**：蛋白表达滞后于 mRNA
+> - **蛋白稳定性**：某些蛋白半衰期很长
+> - **技术差异**：ADT 和 RNA 检测灵敏度不同
+
 ```{r gene_protein_comparison, fig.width=12, fig.height=5}
 # 检查是否有对应的 ADT marker
+# 示例：Ccr7 基因 vs CCR7/CD197 蛋白
 if ("Ccr7" %in% rownames(seurat_obj_wnn[["SCT"]])) {
   adt_features <- grep("CD197|CCR7", rownames(seurat_obj_wnn[["ADT"]]),
                       value = TRUE, ignore.case = TRUE)
 
   if (length(adt_features) > 0) {
-    p_comp <- FeaturePlot(seurat_obj_wnn,
-                         features = c("Ccr7", adt_features[1]),
-                         reduction = "wnn_umap", ncol = 2,
-                         cols = c("lightgrey", "#DE2D26"))
-    print(p_comp)
+    p_gene_protein <- FeaturePlot(seurat_obj_wnn,
+                                  features = c("Ccr7", adt_features[1]),
+                                  reduction = "wnn_umap", ncol = 2,
+                                  cols = c("lightgrey", "#DE2D26")) +
+      plot_annotation(title = "Gene vs Protein Expression Comparison",
+                     subtitle = "Ccr7 mRNA (left) vs CCR7 protein (right)")
+
+    plot_and_save(p_gene_protein, "gene_vs_protein_Ccr7",
+                  subfolder = "WNN", width = 12, height = 5)
+  } else {
+    cat("⚠️  未找到 CCR7/CD197 ADT marker\n")
   }
+} else {
+  cat("⚠️  未找到 Ccr7 基因\n")
 }
 ```
 
 ## 8.3 WNN 权重分布
 
-```{r wnn_weights, fig.width=10, fig.height=5}
+> **如何解读 WNN 权重？**
+>
+> WNN 为每个细胞分配 RNA 和 ADT 的权重，表示哪种模态对该细胞的聚类贡献更大：
+> - **RNA weight 高**：该细胞主要由转录组驱动聚类（如高异质性的细胞亚群）
+> - **ADT weight 高**：该细胞主要由蛋白表达驱动聚类（如稳定的表面标志物）
+> - **权重平衡**：两种模态贡献相当
+>
+> **不同 cluster 的权重差异反映了生物学特性**：
+> - 成熟 DC（高 CCR7 蛋白）可能 ADT weight 更高
+> - 增殖细胞（高转录活性）可能 RNA weight 更高
+
+```{r wnn_weights, fig.width=12, fig.height=5}
 # 检查权重列名
-weight_cols <- grep("weight", colnames(seurat_obj_wnn@meta.data), value = TRUE)
+weight_cols <- grep("weight", colnames(seurat_obj_wnn@meta.data), value = TRUE, ignore.case = TRUE)
 
 if (length(weight_cols) > 0) {
+  cat("找到 WNN 权重列:", paste(weight_cols, collapse = ", "), "\n")
+
   # 通常是 "RNA.weight" 或 "ADT.weight"
-  rna_weight <- grep("RNA", weight_cols, value = TRUE)[1]
-  adt_weight <- grep("ADT", weight_cols, value = TRUE)[1]
+  rna_weight <- grep("RNA", weight_cols, value = TRUE, ignore.case = TRUE)[1]
+  adt_weight <- grep("ADT", weight_cols, value = TRUE, ignore.case = TRUE)[1]
+
+  plots_to_combine <- list()
 
   if (!is.na(rna_weight)) {
     p_weight_rna <- VlnPlot(seurat_obj_wnn, features = rna_weight,
                            group.by = "WNN_clusters", pt.size = 0) +
-      ggtitle("RNA Modality Weight") + NoLegend()
-    print(p_weight_rna)
+      ggtitle("RNA Modality Weight") +
+      labs(subtitle = "Higher = RNA-driven clustering") +
+      NoLegend() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    plots_to_combine[[1]] <- p_weight_rna
   }
 
   if (!is.na(adt_weight)) {
     p_weight_adt <- VlnPlot(seurat_obj_wnn, features = adt_weight,
                            group.by = "WNN_clusters", pt.size = 0) +
-      ggtitle("ADT Modality Weight") + NoLegend()
-    print(p_weight_adt)
+      ggtitle("ADT Modality Weight") +
+      labs(subtitle = "Higher = ADT-driven clustering") +
+      NoLegend() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    plots_to_combine[[2]] <- p_weight_adt
   }
+
+  if (length(plots_to_combine) > 0) {
+    p_weights <- wrap_plots(plots_to_combine, ncol = 2) +
+      plot_annotation(title = "WNN Modality Weights across Clusters",
+                     subtitle = "Weight distribution shows which modality drives clustering for each cluster")
+
+    plot_and_save(p_weights, "wnn_modality_weights",
+                  subfolder = "WNN", width = 12, height = 5)
+  }
+} else {
+  cat("⚠️  未找到 WNN 权重列，可能是 WNN 整合未成功\n")
 }
 ```
 
