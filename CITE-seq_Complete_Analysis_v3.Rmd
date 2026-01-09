@@ -891,6 +891,14 @@ runDoubletFinder <- function(object, PCs, minPCT = 1, maxPCT = 10, pN = 0.25, cl
     }
   }
 
+  # 第一步：删除所有旧的 DoubletFinder 列（如果存在）
+  df_cols_to_remove <- grep("^pANN_|^DF\\.classifications|^DFPrediction",
+                             colnames(object@meta.data), value = TRUE)
+  if (length(df_cols_to_remove) > 0) {
+    message(">>> 删除旧的 DoubletFinder 列: ", paste(df_cols_to_remove, collapse = ", "))
+    object@meta.data <- object@meta.data[, !colnames(object@meta.data) %in% df_cols_to_remove, drop = FALSE]
+  }
+
   # 清理 metadata - 移除可能导致 xtfrm 错误的列
   # 保存原始 metadata 的备份
   original_meta <- object@meta.data
