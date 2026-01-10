@@ -1181,10 +1181,10 @@ seurat_obj <- load_or_compute(
       if (require("harmony", quietly = TRUE)) {
         cat("  步骤 5/8: Harmony 批次校正...\n")
         seurat_obj <- RunHarmony(
-          seurat_obj,
+          object = seurat_obj,
           group.by.vars = "batch",
-          reduction = "pca",
-          dims.use = 1:config$dims_rna,
+          reduction.use = "pca",
+          project.dim = FALSE,
           verbose = FALSE
         )
         reduction_to_use <- "harmony"
