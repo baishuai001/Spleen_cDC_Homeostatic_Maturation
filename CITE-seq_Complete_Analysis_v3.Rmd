@@ -2332,7 +2332,7 @@ cat(strrep("=", 80), "\n\n")
 ##################### WNN 多模态融合 ############################################
 ################################################################################
 
-seurat_obj_wnn <- load_or_compute(
+seurat_obj_adt_rna_wnn <- load_or_compute(
   cache_file = paste0(config$cache_prefix, "_07_wnn_integrated.rds"),
   description = paste0("WNN 多模态融合 - ", config$cache_prefix),
   compute_fn = function() {
@@ -2379,6 +2379,18 @@ seurat_obj_wnn <- load_or_compute(
                                      graph.name = "SCT_snn", verbose = FALSE)
     seurat_obj_clean$SCT_clusters <- Idents(seurat_obj_clean)
 
+    # ==================== 💾 保存 Pre-WNN 对象（用于脚本4） ====================
+    # 此时对象包含：
+    # ✅ 独立的 ADT 聚类：ADT_clusters, adt_umap, adt_pca
+    # ✅ 独立的 RNA 聚类：SCT_clusters, umap, tsne, pca/harmony
+    # ❌ 尚未进行 WNN 整合：无 wnn_umap, WNN_clusters
+    pre_wnn_rds <- paste0(output.dir, "Robjects/", config$project_name, "_pre_wnn.rds")
+    saveRDS(seurat_obj_clean, pre_wnn_rds)
+    cat("\n  💾 Pre-WNN 对象已保存（用于脚本4等下游分析）\n")
+    cat("     文件:", pre_wnn_rds, "\n")
+    cat("     包含: SCT_clusters (", length(unique(seurat_obj_clean$SCT_clusters)),
+        " clusters) + ADT_clusters (", length(unique(seurat_obj_clean$ADT_clusters)), " clusters)\n\n")
+
     cat("  步骤 5/8: 计算 WNN 权重...\n")
     seurat_obj_clean <- FindMultiModalNeighbors(
       seurat_obj_clean,
@@ -2402,7 +2414,7 @@ seurat_obj_wnn <- load_or_compute(
 )
 
 cat("\n✓ WNN 融合完成\n")
-cat("  WNN 聚类数:", length(unique(seurat_obj_wnn$WNN_clusters)), "\n\n")
+cat("  WNN 聚类数:", length(unique(seurat_obj_adt_rna_wnn$WNN_clusters)), "\n\n")
 ```
 
 ## 8.1 WNN 可视化对比
@@ -2423,23 +2435,23 @@ cat("  WNN 聚类数:", length(unique(seurat_obj_wnn$WNN_clusters)), "\n\n")
 ################################################################################
 
 # 确保有足够的颜色
-n_wnn_clusters <- length(unique(seurat_obj_wnn$WNN_clusters))
+n_wnn_clusters <- length(unique(seurat_obj_adt_rna_wnn$WNN_clusters))
 if (is.null(config$colors) || length(config$colors) < n_wnn_clusters) {
   config$colors <- generate_colors(n_wnn_clusters)
 }
 
 # 三种驱动方式对比
-p_adt <- DimPlot(seurat_obj_wnn, reduction = "adt_umap", group.by = "ADT_clusters",
+p_adt <- DimPlot(seurat_obj_adt_rna_wnn, reduction = "adt_umap", group.by = "ADT_clusters",
                 label = TRUE, label.size = 4) +
   ggtitle("ADT-driven Clustering") +
   theme(legend.position = "bottom")
 
-p_rna <- DimPlot(seurat_obj_wnn, reduction = "umap", group.by = "SCT_clusters",
+p_rna <- DimPlot(seurat_obj_adt_rna_wnn, reduction = "umap", group.by = "SCT_clusters",
                 label = TRUE, label.size = 4) +
   ggtitle("RNA-driven Clustering") +
   theme(legend.position = "bottom")
 
-p_wnn <- DimPlot(seurat_obj_wnn, reduction = "wnn_umap", group.by = "WNN_clusters",
+p_wnn <- DimPlot(seurat_obj_adt_rna_wnn, reduction = "wnn_umap", group.by = "WNN_clusters",
                 label = TRUE, label.size = 4, cols = config$colors) +
   ggtitle("WNN-combined Clustering") +
   theme(legend.position = "bottom")
@@ -2447,8 +2459,8 @@ p_wnn <- DimPlot(seurat_obj_wnn, reduction = "wnn_umap", group.by = "WNN_cluster
 # 组合并保存
 p_wnn_comparison <- p_adt + p_rna + p_wnn +
   plot_annotation(title = "WNN Multi-Modal Clustering Comparison",
-                 subtitle = paste0("ADT clusters: ", length(unique(seurat_obj_wnn$ADT_clusters)),
-                                  " | RNA clusters: ", length(unique(seurat_obj_wnn$SCT_clusters)),
+                 subtitle = paste0("ADT clusters: ", length(unique(seurat_obj_adt_rna_wnn$ADT_clusters)),
+                                  " | RNA clusters: ", length(unique(seurat_obj_adt_rna_wnn$SCT_clusters)),
                                   " | WNN clusters: ", n_wnn_clusters))
 
 plot_and_save(p_wnn_comparison, "wnn_clustering_comparison",
@@ -2467,12 +2479,12 @@ plot_and_save(p_wnn_comparison, "wnn_clustering_comparison",
 ```{r gene_protein_comparison, fig.width=12, fig.height=5}
 # 检查是否有对应的 ADT marker
 # 示例：Ccr7 基因 vs CCR7/CD197 蛋白
-if ("Ccr7" %in% rownames(seurat_obj_wnn[["SCT"]])) {
-  adt_features <- grep("CD197|CCR7", rownames(seurat_obj_wnn[["ADT"]]),
+if ("Ccr7" %in% rownames(seurat_obj_adt_rna_wnn[["SCT"]])) {
+  adt_features <- grep("CD197|CCR7", rownames(seurat_obj_adt_rna_wnn[["ADT"]]),
                       value = TRUE, ignore.case = TRUE)
 
   if (length(adt_features) > 0) {
-    p_gene_protein <- FeaturePlot(seurat_obj_wnn,
+    p_gene_protein <- FeaturePlot(seurat_obj_adt_rna_wnn,
                                   features = c("Ccr7", adt_features[1]),
                                   reduction = "wnn_umap", ncol = 2,
                                   cols = c("lightgrey", "#DE2D26")) +
@@ -2504,7 +2516,7 @@ if ("Ccr7" %in% rownames(seurat_obj_wnn[["SCT"]])) {
 
 ```{r wnn_weights, fig.width=12, fig.height=5}
 # 检查权重列名
-weight_cols <- grep("weight", colnames(seurat_obj_wnn@meta.data), value = TRUE, ignore.case = TRUE)
+weight_cols <- grep("weight", colnames(seurat_obj_adt_rna_wnn@meta.data), value = TRUE, ignore.case = TRUE)
 
 if (length(weight_cols) > 0) {
   cat("找到 WNN 权重列:", paste(weight_cols, collapse = ", "), "\n")
@@ -2516,7 +2528,7 @@ if (length(weight_cols) > 0) {
   plots_to_combine <- list()
 
   if (!is.na(rna_weight)) {
-    p_weight_rna <- VlnPlot(seurat_obj_wnn, features = rna_weight,
+    p_weight_rna <- VlnPlot(seurat_obj_adt_rna_wnn, features = rna_weight,
                            group.by = "WNN_clusters", pt.size = 0) +
       ggtitle("RNA Modality Weight") +
       labs(subtitle = "Higher = RNA-driven clustering") +
@@ -2526,7 +2538,7 @@ if (length(weight_cols) > 0) {
   }
 
   if (!is.na(adt_weight)) {
-    p_weight_adt <- VlnPlot(seurat_obj_wnn, features = adt_weight,
+    p_weight_adt <- VlnPlot(seurat_obj_adt_rna_wnn, features = adt_weight,
                            group.by = "WNN_clusters", pt.size = 0) +
       ggtitle("ADT Modality Weight") +
       labs(subtitle = "Higher = ADT-driven clustering") +
@@ -2551,14 +2563,14 @@ if (length(weight_cols) > 0) {
 ## 8.4 WNN 差异基因分析
 
 ```{r wnn_deg}
-Idents(seurat_obj_wnn) <- "WNN_clusters"
-DefaultAssay(seurat_obj_wnn) <- "SCT"
+Idents(seurat_obj_adt_rna_wnn) <- "WNN_clusters"
+DefaultAssay(seurat_obj_adt_rna_wnn) <- "SCT"
 
 wnn_markers <- load_or_compute(
   cache_file = paste0(config$cache_prefix, "_08_wnn_deg.rds"),
   description = paste0("WNN 差异基因分析 - ", config$cache_prefix),
   compute_fn = function() {
-    markers <- FindAllMarkers(seurat_obj_wnn, assay = "SCT", slot = "data",
+    markers <- FindAllMarkers(seurat_obj_adt_rna_wnn, assay = "SCT", slot = "data",
                              only.pos = TRUE, verbose = FALSE)
     cat("\n  找到", nrow(markers), "个差异表达基因\n")
     return(markers)
@@ -2582,29 +2594,29 @@ cat("✓ WNN 差异基因列表已保存:", wnn_deg_csv, "\n\n")
 
 # 保存最终 Seurat 对象
 final_rds <- paste0(output.dir, "Robjects/", config$project_name, "_final.rds")
-saveRDS(seurat_obj_wnn, final_rds)
+saveRDS(seurat_obj_adt_rna_wnn, final_rds)
 cat("✓ 最终对象已保存:", final_rds, "\n")
 
 # 保存关键信息汇总
 summary_info <- list(
   analysis_mode = analysis_mode,
   project_name = config$project_name,
-  total_cells = ncol(seurat_obj_wnn),
-  total_genes = nrow(seurat_obj_wnn),
-  n_clusters_RNA = length(unique(seurat_obj_wnn$SCT_clusters)),
-  n_clusters_ADT = length(unique(seurat_obj_wnn$ADT_clusters)),
-  n_clusters_WNN = length(unique(seurat_obj_wnn$WNN_clusters)),
+  total_cells = ncol(seurat_obj_adt_rna_wnn),
+  total_genes = nrow(seurat_obj_adt_rna_wnn),
+  n_clusters_RNA = length(unique(seurat_obj_adt_rna_wnn$SCT_clusters)),
+  n_clusters_ADT = length(unique(seurat_obj_adt_rna_wnn$ADT_clusters)),
+  n_clusters_WNN = length(unique(seurat_obj_adt_rna_wnn$WNN_clusters)),
   dims_used = list(RNA = config$dims_rna, ADT = config$dims_adt),
   resolution = config$resolution
 )
 
 if (analysis_mode == "integrated") {
   summary_info$batch_correction <- config$integration_method
-  summary_info$cell_counts <- table(seurat_obj_wnn$batch)
+  summary_info$cell_counts <- table(seurat_obj_adt_rna_wnn$batch)
 }
 
 if (analysis_mode == "full") {
-  summary_info$predicted_types <- table(seurat_obj_wnn$cell_type_predicted)
+  summary_info$predicted_types <- table(seurat_obj_adt_rna_wnn$cell_type_predicted)
 }
 
 summary_file <- paste0(output.dir, "Files/", config$project_name, "_summary.rds")
