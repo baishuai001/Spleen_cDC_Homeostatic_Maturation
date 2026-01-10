@@ -691,10 +691,13 @@ if (analysis_mode %in% c("cDC1", "cDC2")) {
       # 更新配置
       config$cell_types_list <<- all_cell_types
 
-      # 合并
+      # 合并（使用 bind_rows 处理列不匹配）
       combined_cells <- unlist(all_cells)
-      combined_metadata <- do.call(rbind, all_metadata)
+      combined_metadata <- dplyr::bind_rows(all_metadata)
       combined_idents <- unlist(all_idents)
+
+      # 确保行名正确
+      rownames(combined_metadata) <- combined_cells
 
       cat("\n  ✓ 整合完成:\n")
       cat("    cDC1 细胞:", length(all_cells$cDC1), "\n")
