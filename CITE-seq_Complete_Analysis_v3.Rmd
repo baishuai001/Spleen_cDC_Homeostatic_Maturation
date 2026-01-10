@@ -2353,18 +2353,24 @@ seurat_obj_adt_rna_wnn <- load_or_compute(
                                reduction.name = "adt_pca", reduction.key = "adtPC_",
                                npcs = min(30, nrow(seurat_obj_clean[["ADT"]]) - 1), verbose = FALSE)
 
-    cat("  步骤 3/8: ADT 驱动的聚类...\n")
+    cat("  步骤 3/9: ADT 驱动的聚类...\n")
     seurat_obj_clean <- FindNeighbors(seurat_obj_clean, reduction = "adt_pca",
                                       dims = 1:min(config$dims_adt, 20), verbose = FALSE)
     seurat_obj_clean <- FindClusters(seurat_obj_clean, resolution = config$resolution,
                                      graph.name = "ADT_snn", verbose = FALSE)
     seurat_obj_clean$ADT_clusters <- Idents(seurat_obj_clean)
 
+    cat("  步骤 4/9: ADT 降维 (UMAP + tSNE)...\n")
     seurat_obj_clean <- RunUMAP(seurat_obj_clean, reduction = "adt_pca",
                                 dims = 1:min(config$dims_adt, 15),
                                 reduction.name = "adt_umap", reduction.key = "adtUMAP_", verbose = FALSE)
 
-    cat("  步骤 4/8: RNA 驱动的聚类...\n")
+    seurat_obj_clean <- RunTSNE(seurat_obj_clean, reduction = "adt_pca",
+                                dims = 1:min(config$dims_adt, 15),
+                                reduction.name = "adt_tsne", reduction.key = "adtTSNE_",
+                                perplexity = 30, verbose = FALSE)
+
+    cat("  步骤 5/9: RNA 驱动的聚类...\n")
     # 确定用哪个 RNA reduction
     rna_reduction <- if (analysis_mode == "integrated" && config$batch_correction &&
                         "harmony" %in% names(seurat_obj_clean@reductions)) {
@@ -2381,7 +2387,7 @@ seurat_obj_adt_rna_wnn <- load_or_compute(
 
     # ==================== 💾 保存 Pre-WNN 对象（用于脚本4） ====================
     # 此时对象包含：
-    # ✅ 独立的 ADT 聚类：ADT_clusters, adt_umap, adt_pca
+    # ✅ 独立的 ADT 聚类：ADT_clusters, adt_umap, adt_tsne, adt_pca
     # ✅ 独立的 RNA 聚类：SCT_clusters, umap, tsne, pca/harmony
     # ❌ 尚未进行 WNN 整合：无 wnn_umap, WNN_clusters
     pre_wnn_rds <- paste0(output.dir, "Robjects/", config$project_name, "_pre_wnn.rds")
@@ -2391,7 +2397,7 @@ seurat_obj_adt_rna_wnn <- load_or_compute(
     cat("     包含: SCT_clusters (", length(unique(seurat_obj_clean$SCT_clusters)),
         " clusters) + ADT_clusters (", length(unique(seurat_obj_clean$ADT_clusters)), " clusters)\n\n")
 
-    cat("  步骤 5/8: 计算 WNN 权重...\n")
+    cat("  步骤 6/9: 计算 WNN 权重...\n")
     seurat_obj_clean <- FindMultiModalNeighbors(
       seurat_obj_clean,
       reduction.list = list(rna_reduction, "adt_pca"),
@@ -2399,16 +2405,16 @@ seurat_obj_adt_rna_wnn <- load_or_compute(
       verbose = FALSE
     )
 
-    cat("  步骤 6/8: 运行 WNN UMAP...\n")
+    cat("  步骤 7/9: 运行 WNN UMAP...\n")
     seurat_obj_clean <- RunUMAP(seurat_obj_clean, nn.name = "weighted.nn",
                                 reduction.name = "wnn_umap", reduction.key = "wnnUMAP_", verbose = FALSE)
 
-    cat("  步骤 7/8: WNN 聚类...\n")
+    cat("  步骤 8/9: WNN 聚类...\n")
     seurat_obj_clean <- FindClusters(seurat_obj_clean, graph.name = "wsnn",
                                      resolution = config$resolution, verbose = FALSE)
     seurat_obj_clean$WNN_clusters <- Idents(seurat_obj_clean)
 
-    cat("  步骤 8/8: 完成!\n")
+    cat("  步骤 9/9: 完成!\n")
     return(seurat_obj_clean)
   }
 )
@@ -2465,6 +2471,46 @@ p_wnn_comparison <- p_adt + p_rna + p_wnn +
 
 plot_and_save(p_wnn_comparison, "wnn_clustering_comparison",
               subfolder = "WNN", width = 18, height = 7)
+```
+
+## 8.1.5 UMAP vs tSNE 对比
+
+> **为什么需要同时展示 UMAP 和 tSNE？**
+>
+> - **UMAP**：保留全局结构，适合识别大的细胞类群
+> - **tSNE**：强调局部结构，适合识别亚群和细微差异
+> - 两者结合能更全面地理解数据的聚类结构
+
+```{r tsne_comparison, fig.width=18, fig.height=12}
+# ADT 降维对比 (UMAP vs tSNE)
+p_adt_umap <- DimPlot(seurat_obj_adt_rna_wnn, reduction = "adt_umap",
+                      group.by = "ADT_clusters", label = TRUE, label.size = 4) +
+  ggtitle("ADT Clustering - UMAP") +
+  theme(legend.position = "right")
+
+p_adt_tsne <- DimPlot(seurat_obj_adt_rna_wnn, reduction = "adt_tsne",
+                      group.by = "ADT_clusters", label = TRUE, label.size = 4) +
+  ggtitle("ADT Clustering - tSNE") +
+  theme(legend.position = "right")
+
+# RNA 降维对比 (UMAP vs tSNE)
+p_rna_umap <- DimPlot(seurat_obj_adt_rna_wnn, reduction = "umap",
+                      group.by = "SCT_clusters", label = TRUE, label.size = 4) +
+  ggtitle("RNA Clustering - UMAP") +
+  theme(legend.position = "right")
+
+p_rna_tsne <- DimPlot(seurat_obj_adt_rna_wnn, reduction = "tsne",
+                      group.by = "SCT_clusters", label = TRUE, label.size = 4) +
+  ggtitle("RNA Clustering - tSNE") +
+  theme(legend.position = "right")
+
+# 组合展示
+p_dimension_comparison <- (p_adt_umap | p_adt_tsne) / (p_rna_umap | p_rna_tsne) +
+  plot_annotation(title = "Dimensionality Reduction Comparison: UMAP vs tSNE",
+                  subtitle = "Comparing global (UMAP) and local (tSNE) structure preservation")
+
+plot_and_save(p_dimension_comparison, "umap_vs_tsne_comparison",
+              subfolder = "WNN", width = 18, height = 12)
 ```
 
 ## 8.2 基因 vs 蛋白对比
