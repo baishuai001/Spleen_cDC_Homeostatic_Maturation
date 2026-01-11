@@ -2367,6 +2367,118 @@ plot_and_save(p_wnn_comparison, "wnn_clustering_comparison",
               subfolder = "WNN", width = 18, height = 7)
 ```
 
+## 8.1.2 批次分布对比（仅整合模式）
+
+> **为什么需要可视化批次分布？**
+>
+> 在 **integrated mode** 中，我们整合了 cDC1 和 cDC2 两个批次的数据。
+> 对比三种降维方法（ADT、RNA、WNN）上的批次分布，可以评估：
+> - **批次效应的影响**：RNA 通常受批次影响更大，ADT 更稳定
+> - **Harmony 批次校正的效果**：RNA UMAP 上批次是否混合均匀
+> - **WNN 整合的优势**：WNN 是否成功平衡了批次效应和生物学差异
+>
+> **理想的整合结果**：
+> - WNN UMAP 上，cDC1 和 cDC2 细胞在相同细胞类型区域混合
+> - 但不同细胞类型（如 resident vs migratory）仍然分开
+
+```{r wnn_batch_distribution, fig.width=18, fig.height=6}
+################################################################################
+##################### 批次分布对比（仅整合模式）####################################
+################################################################################
+#
+# 【功能说明】
+# 可视化 cDC1 vs cDC2 批次在三种降维方法上的分布
+# 仅在 integrated mode 下运行
+#
+# 【解读要点】
+# - ADT UMAP：批次分离明显 → ADT 表达稳定，批次间差异小
+# - RNA UMAP：批次混合均匀 → Harmony 批次校正成功
+# - WNN UMAP：批次适度混合 → 保留生物学差异，去除技术差异
+#
+################################################################################
+
+if (analysis_mode == "integrated") {
+  cat("\n", strrep("=", 80), "\n")
+  cat("📊 批次分布可视化（cDC1 vs cDC2）\n")
+  cat(strrep("=", 80), "\n\n")
+
+  # 检查是否有 batch 信息
+  if ("batch" %in% colnames(seurat_obj_adt_rna_wnn@meta.data)) {
+
+    # 定义批次颜色
+    batch_colors <- c("cDC1" = "#E41A1C", "cDC2" = "#377EB8")  # 红色 vs 蓝色
+
+    # ADT UMAP - 按批次着色
+    p_adt_batch <- DimPlot(seurat_obj_adt_rna_wnn,
+                           reduction = "adt_umap",
+                           group.by = "batch",
+                           cols = batch_colors,
+                           pt.size = 0.3) +
+      ggtitle("ADT-driven UMAP") +
+      labs(subtitle = "Batch distribution on ADT reduction") +
+      theme(legend.position = "bottom")
+
+    # RNA UMAP - 按批次着色
+    p_rna_batch <- DimPlot(seurat_obj_adt_rna_wnn,
+                           reduction = "umap",
+                           group.by = "batch",
+                           cols = batch_colors,
+                           pt.size = 0.3) +
+      ggtitle("RNA-driven UMAP (Harmony corrected)") +
+      labs(subtitle = "Batch distribution after Harmony correction") +
+      theme(legend.position = "bottom")
+
+    # WNN UMAP - 按批次着色
+    p_wnn_batch <- DimPlot(seurat_obj_adt_rna_wnn,
+                           reduction = "wnn_umap",
+                           group.by = "batch",
+                           cols = batch_colors,
+                           pt.size = 0.3) +
+      ggtitle("WNN-combined UMAP") +
+      labs(subtitle = "Batch distribution on integrated reduction") +
+      theme(legend.position = "bottom")
+
+    # 组合并保存
+    p_batch_comparison <- p_adt_batch + p_rna_batch + p_wnn_batch +
+      plot_annotation(
+        title = "Batch Distribution Comparison (cDC1 vs cDC2)",
+        subtitle = paste0("Total cells: ", ncol(seurat_obj_adt_rna_wnn),
+                         " | cDC1: ", sum(seurat_obj_adt_rna_wnn$batch == "cDC1", na.rm = TRUE),
+                         " | cDC2: ", sum(seurat_obj_adt_rna_wnn$batch == "cDC2", na.rm = TRUE))
+      )
+
+    plot_and_save(p_batch_comparison, "wnn_batch_distribution_comparison",
+                  subfolder = "WNN", width = 18, height = 7)
+
+    cat("\n✓ 批次分布对比图已保存\n")
+    cat(strrep("=", 80), "\n\n")
+
+  } else {
+    cat("⚠️  未找到 batch 列，跳过批次分布可视化\n\n")
+  }
+} else {
+  cat("ℹ️  批次分布对比仅在 integrated mode 下运行\n")
+  cat("   当前模式:", analysis_mode, "\n\n")
+}
+```
+
+> **🔍 如何解读批次分布？**
+>
+> **情况1：理想的整合结果**
+> - **ADT UMAP**：cDC1 和 cDC2 可能有轻微分离（蛋白表达本身有差异）
+> - **RNA UMAP**：批次混合均匀，没有明显的 cDC1/cDC2 分离（Harmony 成功）
+> - **WNN UMAP**：在保留生物学差异的同时，批次适度混合
+>
+> **情况2：批次效应未消除**
+> - **RNA UMAP**：cDC1 和 cDC2 仍然形成两个独立的簇
+> - **原因**：Harmony 参数不当，或批次差异过大
+> - **解决**：调整 Harmony 参数（如增加 `theta` 参数）
+>
+> **情况3：过度校正**
+> - **RNA UMAP**：所有细胞完全混合，失去了细胞类型边界
+> - **原因**：Harmony 过度校正，抹去了生物学差异
+> - **解决**：减小 Harmony 校正强度
+
 ## 8.1.5 UMAP vs tSNE 对比
 
 > **为什么需要同时展示 UMAP 和 tSNE？**
