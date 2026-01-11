@@ -3242,253 +3242,459 @@ cat("✓ WNN Markers 可视化完成\n")
 cat(strrep("=", 80), "\n\n")
 ```
 
-### 8.6.4 功能基因组可视化
+### 8.6.4 功能基因组可视化（三模态完整对比）
 
-> **为什么需要功能基因组可视化？**
+> **为什么需要功能基因组的三模态对比？**
 >
-> 在完成三种聚类策略的 marker 对比后，我们需要从**功能视角**深入理解细胞亚群：
-> - **调控功能**：DC 的免疫抑制能力（PD-L1, PD-L2, Aldh1a2）
-> - **迁移能力**：DC 向淋巴结归巢（Ccr7, Fscn1, Marcks）
-> - **标志物鉴定**：核心 DC 亚群 marker（Xcr1, Sirpa, Itgax）
-> - **成熟状态**：共刺激分子表达（Cd80, Cd86, Cd40）
-> - **Th2 响应**：诱导 Th2 分化能力（Il4ra, Ccl17, Stat6）
-> - **转录调控**：发育和分化的转录因子（Batf3, Irf4, Zbtb46）
+> 在完成 DEG markers 的三模态对比后（8.6.1-8.6.3），我们需要从**预定义的功能视角**深入理解细胞亚群。
+>
+> **与 DEG markers 的区别**：
+> - **DEG markers**（8.6.1-8.6.3）：数据驱动，发现每个 cluster 的特异性基因
+> - **功能基因组**（8.6.4）：假说驱动，评估预定义的功能通路和生物学过程
+>
+> **7组功能基因**：
+> 1. **成熟基因** (5 genes)：Cd80, Cd86, Cd40, Relb, Cd83
+> 2. **调控基因** (7 genes)：Cd274, Pdcd1lg2, Cd200, Fas, Aldh1a2, Socs1, Socs2
+> 3. **迁移基因** (8 genes)：Ccr7, Myo1g, Cxcl16, Adam8, Icam1, Fscn1, Marcks, Marcksl1
+> 4. **标志物** (7 genes)：H2-Ab1, Itgax, Itgam, Itgae, Xcr1, Sirpa, Cd24a
+> 5. **Th2响应** (7 genes)：Il4ra, Il4i1, Ccl17, Ccl22, Tnfrsf4, Stat6, Bcl2l1
+> 6. **转录因子** (15 genes)：Spi1, Zbtb46, Irf8, Nfil3, Id2, Batf3, Irf4, ...
 >
 > **本节目标**：
-> 1. 整合展示所有7组功能基因的表达模式（DotPlot）
-> 2. 每组基因单独展示空间分布（FeaturePlot）
-> 3. 基于 WNN clustering，展示多模态整合后的功能状态
+> 1. 为 RNA/ADT/WNN 三种聚类策略分别生成功能基因可视化
+> 2. 每种策略包含：DotPlot（整合）+ Heatmap（整合）+ FeaturePlot（7组分别）
+> 3. 对比三种策略下的功能基因表达差异
 
-#### 8.6.4.1 七组功能基因整合 DotPlot
+#### 8.6.4.1 RNA 功能基因可视化（基于 SCT_clusters）
 
-```{r functional_genes_dotplot, fig.width=20, fig.height=10}
+```{r rna_functional_genes, fig.width=20, fig.height=12}
 ################################################################################
-##################### 七组功能基因整合 DotPlot ####################################
+##################### RNA 功能基因可视化（SCT_clusters）##########################
 ################################################################################
 
 cat("\n", strrep("=", 80), "\n")
-cat("📊 七组功能基因整合可视化\n")
+cat("📊 RNA 功能基因可视化（基于 SCT_clusters）\n")
 cat(strrep("=", 80), "\n\n")
 
-# 设置分析参数（基于 WNN clusters）
-Idents(seurat_obj_adt_rna_wnn) <- "WNN_clusters"
+# 设置分析参数
+Idents(seurat_obj_adt_rna_wnn) <- "SCT_clusters"
 DefaultAssay(seurat_obj_adt_rna_wnn) <- "SCT"
 
 # 整合所有7组功能基因
 all_functional_genes <- c(
-  genes_maturation,              # 成熟 (5 genes)
-  genes_regulatory,              # 调控 (7 genes)
-  genes_migration,               # 迁移 (8 genes)
-  genes_marker,                  # 标志物 (7 genes)
-  genes_th2_response,            # Th2响应 (7 genes)
-  genes_transcription_factors    # 转录因子 (15 genes)
+  genes_maturation, genes_regulatory, genes_migration,
+  genes_marker, genes_th2_response, genes_transcription_factors
 )
-
-# 去重并过滤存在的基因
 all_functional_genes <- unique(all_functional_genes)
 all_functional_genes <- intersect(all_functional_genes, rownames(seurat_obj_adt_rna_wnn))
 
-cat("【功能基因统计】\n")
-cat("  - 成熟基因:", length(genes_maturation), "个\n")
-cat("  - 调控基因:", length(genes_regulatory), "个\n")
-cat("  - 迁移基因:", length(genes_migration), "个\n")
-cat("  - 标志物:", length(genes_marker), "个\n")
-cat("  - Th2响应:", length(genes_th2_response), "个\n")
-cat("  - 转录因子:", length(genes_transcription_factors), "个\n")
-cat("  - 总计（去重后）:", length(all_functional_genes), "个\n\n")
+cat("【功能基因统计 - RNA】\n")
+cat("  总计（去重后）:", length(all_functional_genes), "个\n\n")
 
-# 创建整合 DotPlot
-cat("【1/8】生成七组功能基因整合 DotPlot...\n")
+# ==================== RNA DotPlot ====================
+cat("【1/9】生成 RNA 功能基因 DotPlot...\n")
 
-p_functional_dotplot <- DotPlot(seurat_obj_adt_rna_wnn,
-                                features = all_functional_genes,
-                                assay = "SCT") +
+p_rna_func_dot <- DotPlot(seurat_obj_adt_rna_wnn,
+                          features = all_functional_genes,
+                          assay = "SCT") +
   RotatedAxis() +
   scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
-  labs(title = "Functional Gene Signatures across WNN Clusters",
-       subtitle = paste0("7 functional gene sets (", length(all_functional_genes), " genes total)"),
-       x = "Functional Genes", y = "WNN Clusters") +
-  theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+  labs(title = "Functional Genes - RNA (SCT) Clusters",
+       subtitle = paste0("7 functional gene sets (", length(all_functional_genes), " genes)"),
+       x = "Functional Genes", y = "SCT Clusters") +
+  theme(axis.text.x = element_text(size = 7, angle = 45, hjust = 1))
 
-plot_and_save(p_functional_dotplot, "functional_genes_integrated_dotplot",
+plot_and_save(p_rna_func_dot, "functional_rna_dotplot",
               subfolder = "Functional_Genes",
-              width = max(16, length(all_functional_genes) * 0.3), height = 10)
+              width = max(18, length(all_functional_genes) * 0.35), height = 10)
 
-cat("  ✓ 整合 DotPlot 已保存\n")
-```
+# ==================== RNA Heatmap ====================
+cat("【2/9】生成 RNA 功能基因 Heatmap...\n")
 
-#### 8.6.4.2 成熟基因 FeaturePlot
+# ScaleData for heatmap
+seurat_obj_adt_rna_wnn <- ScaleData(seurat_obj_adt_rna_wnn,
+                                    features = all_functional_genes,
+                                    assay = "SCT",
+                                    verbose = FALSE)
 
-```{r maturation_genes_featureplot, fig.width=12, fig.height=8}
-cat("\n【2/8】成熟基因（Maturation）FeaturePlot...\n")
+p_rna_func_heat <- DoHeatmap(seurat_obj_adt_rna_wnn,
+                             features = all_functional_genes,
+                             assay = "SCT",
+                             group.by = "SCT_clusters") +
+  scale_fill_gradientn(colors = c("blue", "white", "red")) +
+  labs(title = "Functional Genes Heatmap - RNA (SCT) Clusters",
+       subtitle = paste0(length(all_functional_genes), " genes across 7 functional categories")) +
+  theme(axis.text.y = element_text(size = 6))
 
-genes_maturation_filtered <- intersect(genes_maturation, rownames(seurat_obj_adt_rna_wnn))
+plot_and_save(p_rna_func_heat, "functional_rna_heatmap",
+              subfolder = "Functional_Genes",
+              width = 14, height = max(12, length(all_functional_genes) * 0.25))
 
-if (length(genes_maturation_filtered) > 0) {
-  p_maturation_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
-                                   features = genes_maturation_filtered,
-                                   reduction = "wnn_umap",
-                                   ncol = 3,
-                                   pt.size = 0.5) +
-    plot_annotation(title = "Maturation Genes Expression on WNN UMAP",
-                   subtitle = paste0(length(genes_maturation_filtered), " genes: Cd80, Cd86, Cd40, Relb, Cd83"))
-
-  plot_and_save(p_maturation_feat, "functional_genes_maturation_featureplot",
+# ==================== RNA FeaturePlots (7组分别) ====================
+# 成熟基因
+cat("【3/9】成熟基因 FeaturePlot (RNA)...\n")
+genes_mat_filt <- intersect(genes_maturation, rownames(seurat_obj_adt_rna_wnn))
+if (length(genes_mat_filt) > 0) {
+  p_rna_mat <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mat_filt,
+                           reduction = "umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Maturation Genes on RNA UMAP")
+  plot_and_save(p_rna_mat, "functional_rna_maturation_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_maturation_filtered) / 3) * 4)
-
-  cat("  ✓ 成熟基因 FeaturePlot 已保存 (", length(genes_maturation_filtered), "个基因)\n")
+                width = 12, height = ceiling(length(genes_mat_filt) / 3) * 4)
 }
-```
 
-#### 8.6.4.3 调控基因 FeaturePlot
-
-```{r regulatory_genes_featureplot, fig.width=12, fig.height=8}
-cat("\n【3/8】调控基因（Regulatory）FeaturePlot...\n")
-
-genes_regulatory_filtered <- intersect(genes_regulatory, rownames(seurat_obj_adt_rna_wnn))
-
-if (length(genes_regulatory_filtered) > 0) {
-  p_regulatory_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
-                                   features = genes_regulatory_filtered,
-                                   reduction = "wnn_umap",
-                                   ncol = 3,
-                                   pt.size = 0.5) +
-    plot_annotation(title = "Regulatory Genes Expression on WNN UMAP",
-                   subtitle = paste0(length(genes_regulatory_filtered), " genes: PD-L1/L2, Cd200, Fas, Aldh1a2, Socs1/2"))
-
-  plot_and_save(p_regulatory_feat, "functional_genes_regulatory_featureplot",
+# 调控基因
+cat("【4/9】调控基因 FeaturePlot (RNA)...\n")
+genes_reg_filt <- intersect(genes_regulatory, rownames(seurat_obj_adt_rna_wnn))
+if (length(genes_reg_filt) > 0) {
+  p_rna_reg <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_reg_filt,
+                           reduction = "umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Regulatory Genes on RNA UMAP")
+  plot_and_save(p_rna_reg, "functional_rna_regulatory_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_regulatory_filtered) / 3) * 4)
-
-  cat("  ✓ 调控基因 FeaturePlot 已保存 (", length(genes_regulatory_filtered), "个基因)\n")
+                width = 12, height = ceiling(length(genes_reg_filt) / 3) * 4)
 }
-```
 
-#### 8.6.4.4 迁移基因 FeaturePlot
-
-```{r migration_genes_featureplot, fig.width=12, fig.height=10}
-cat("\n【4/8】迁移基因（Migration）FeaturePlot...\n")
-
-genes_migration_filtered <- intersect(genes_migration, rownames(seurat_obj_adt_rna_wnn))
-
-if (length(genes_migration_filtered) > 0) {
-  p_migration_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
-                                  features = genes_migration_filtered,
-                                  reduction = "wnn_umap",
-                                  ncol = 3,
-                                  pt.size = 0.5) +
-    plot_annotation(title = "Migration Genes Expression on WNN UMAP",
-                   subtitle = paste0(length(genes_migration_filtered), " genes: Ccr7, Myo1g, Fscn1, Marcks, etc."))
-
-  plot_and_save(p_migration_feat, "functional_genes_migration_featureplot",
+# 迁移基因
+cat("【5/9】迁移基因 FeaturePlot (RNA)...\n")
+genes_mig_filt <- intersect(genes_migration, rownames(seurat_obj_adt_rna_wnn))
+if (length(genes_mig_filt) > 0) {
+  p_rna_mig <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mig_filt,
+                           reduction = "umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Migration Genes on RNA UMAP")
+  plot_and_save(p_rna_mig, "functional_rna_migration_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_migration_filtered) / 3) * 4)
-
-  cat("  ✓ 迁移基因 FeaturePlot 已保存 (", length(genes_migration_filtered), "个基因)\n")
+                width = 12, height = ceiling(length(genes_mig_filt) / 3) * 4)
 }
-```
 
-#### 8.6.4.5 标志物 FeaturePlot
-
-```{r marker_genes_featureplot, fig.width=12, fig.height=8}
-cat("\n【5/8】标志物（Marker）FeaturePlot...\n")
-
-genes_marker_filtered <- intersect(genes_marker, rownames(seurat_obj_adt_rna_wnn))
-
-if (length(genes_marker_filtered) > 0) {
-  p_marker_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
-                               features = genes_marker_filtered,
-                               reduction = "wnn_umap",
-                               ncol = 3,
-                               pt.size = 0.5) +
-    plot_annotation(title = "Core Marker Genes Expression on WNN UMAP",
-                   subtitle = paste0(length(genes_marker_filtered), " genes: Xcr1, Sirpa, Itgax, Itgae, etc."))
-
-  plot_and_save(p_marker_feat, "functional_genes_marker_featureplot",
+# 标志物
+cat("【6/9】标志物 FeaturePlot (RNA)...\n")
+genes_mark_filt <- intersect(genes_marker, rownames(seurat_obj_adt_rna_wnn))
+if (length(genes_mark_filt) > 0) {
+  p_rna_mark <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mark_filt,
+                            reduction = "umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Marker Genes on RNA UMAP")
+  plot_and_save(p_rna_mark, "functional_rna_marker_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_marker_filtered) / 3) * 4)
-
-  cat("  ✓ 标志物 FeaturePlot 已保存 (", length(genes_marker_filtered), "个基因)\n")
+                width = 12, height = ceiling(length(genes_mark_filt) / 3) * 4)
 }
-```
 
-#### 8.6.4.6 Th2 响应基因 FeaturePlot
-
-```{r th2_response_genes_featureplot, fig.width=12, fig.height=8}
-cat("\n【6/8】Th2 响应基因（Th2 Response）FeaturePlot...\n")
-
-genes_th2_response_filtered <- intersect(genes_th2_response, rownames(seurat_obj_adt_rna_wnn))
-
-if (length(genes_th2_response_filtered) > 0) {
-  p_th2_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
-                            features = genes_th2_response_filtered,
-                            reduction = "wnn_umap",
-                            ncol = 3,
-                            pt.size = 0.5) +
-    plot_annotation(title = "Th2 Response Genes Expression on WNN UMAP",
-                   subtitle = paste0(length(genes_th2_response_filtered), " genes: Il4ra, Ccl17, Ccl22, Stat6, etc."))
-
-  plot_and_save(p_th2_feat, "functional_genes_th2_response_featureplot",
+# Th2响应
+cat("【7/9】Th2响应基因 FeaturePlot (RNA)...\n")
+genes_th2_filt <- intersect(genes_th2_response, rownames(seurat_obj_adt_rna_wnn))
+if (length(genes_th2_filt) > 0) {
+  p_rna_th2 <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_th2_filt,
+                           reduction = "umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Th2 Response Genes on RNA UMAP")
+  plot_and_save(p_rna_th2, "functional_rna_th2_response_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_th2_response_filtered) / 3) * 4)
-
-  cat("  ✓ Th2响应基因 FeaturePlot 已保存 (", length(genes_th2_response_filtered), "个基因)\n")
+                width = 12, height = ceiling(length(genes_th2_filt) / 3) * 4)
 }
-```
 
-#### 8.6.4.7 转录因子 FeaturePlot
-
-```{r transcription_factors_featureplot, fig.width=12, fig.height=16}
-cat("\n【7/8】转录因子（Transcription Factors）FeaturePlot...\n")
-
-genes_transcription_factors_filtered <- intersect(genes_transcription_factors, rownames(seurat_obj_adt_rna_wnn))
-
-if (length(genes_transcription_factors_filtered) > 0) {
-  p_tf_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
-                           features = genes_transcription_factors_filtered,
-                           reduction = "wnn_umap",
-                           ncol = 3,
-                           pt.size = 0.5) +
-    plot_annotation(title = "Transcription Factors Expression on WNN UMAP",
-                   subtitle = paste0(length(genes_transcription_factors_filtered),
-                                    " genes: Batf3, Irf4, Irf8, Zbtb46, etc."))
-
-  plot_and_save(p_tf_feat, "functional_genes_transcription_factors_featureplot",
+# 转录因子
+cat("【8/9】转录因子 FeaturePlot (RNA)...\n")
+genes_tf_filt <- intersect(genes_transcription_factors, rownames(seurat_obj_adt_rna_wnn))
+if (length(genes_tf_filt) > 0) {
+  p_rna_tf <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_tf_filt,
+                          reduction = "umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Transcription Factors on RNA UMAP")
+  plot_and_save(p_rna_tf, "functional_rna_transcription_factors_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_transcription_factors_filtered) / 3) * 4)
-
-  cat("  ✓ 转录因子 FeaturePlot 已保存 (", length(genes_transcription_factors_filtered), "个基因)\n")
+                width = 12, height = ceiling(length(genes_tf_filt) / 3) * 4)
 }
+
+cat("【9/9】RNA 功能基因可视化完成\n\n")
+cat(strrep("=", 80), "\n")
+cat("✓ RNA 功能基因可视化完成\n")
+cat(strrep("=", 80), "\n\n")
 ```
 
-#### 8.6.4.8 功能基因组总结
+#### 8.6.4.2 ADT 功能基因可视化（基于 ADT_clusters）
 
-```{r functional_genes_summary}
-cat("\n【8/8】功能基因组可视化完成\n")
+```{r adt_functional_genes, fig.width=20, fig.height=12}
+################################################################################
+##################### ADT 功能基因可视化（ADT_clusters）##########################
+################################################################################
+#
+# 【说明】
+# ADT_clusters 是基于蛋白表达（ADT）的聚类
+# 但我们仍然展示这些功能基因的 RNA 表达（SCT assay）
+# 目的：评估"蛋白驱动的聚类"在 RNA 功能基因层面的表现
+#
+################################################################################
 
 cat("\n", strrep("=", 80), "\n")
-cat("✓ 功能基因组可视化完成\n")
+cat("📊 ADT 功能基因可视化（基于 ADT_clusters）\n")
 cat(strrep("=", 80), "\n\n")
 
-cat("📁 输出文件汇总:\n")
-cat("  子文件夹: Functional_Genes/\n")
-cat("  - 整合 DotPlot: functional_genes_integrated_dotplot.png/.pdf\n")
-cat("  - 成熟基因 FeaturePlot: functional_genes_maturation_featureplot.png/.pdf\n")
-cat("  - 调控基因 FeaturePlot: functional_genes_regulatory_featureplot.png/.pdf\n")
-cat("  - 迁移基因 FeaturePlot: functional_genes_migration_featureplot.png/.pdf\n")
-cat("  - 标志物 FeaturePlot: functional_genes_marker_featureplot.png/.pdf\n")
-cat("  - Th2响应 FeaturePlot: functional_genes_th2_response_featureplot.png/.pdf\n")
-cat("  - 转录因子 FeaturePlot: functional_genes_transcription_factors_featureplot.png/.pdf\n\n")
+# 设置分析参数
+Idents(seurat_obj_adt_rna_wnn) <- "ADT_clusters"
+DefaultAssay(seurat_obj_adt_rna_wnn) <- "SCT"  # 使用 RNA 表达
 
-cat("🎯 解读建议:\n")
-cat("  1. 整合 DotPlot：识别每个 WNN cluster 的功能特征组合\n")
-cat("  2. 成熟基因：识别成熟 vs 未成熟 DC 亚群\n")
-cat("  3. 调控基因：识别具有免疫抑制功能的 DC\n")
-cat("  4. 迁移基因：识别 migratory vs resident DC\n")
-cat("  5. 标志物：验证 cDC1/cDC2 亚群鉴定\n")
-cat("  6. Th2响应：识别诱导 Th2 极化的 DC\n")
-cat("  7. 转录因子：理解 DC 发育和分化状态\n\n")
+# ==================== ADT DotPlot ====================
+cat("【1/9】生成 ADT 功能基因 DotPlot...\n")
+
+p_adt_func_dot <- DotPlot(seurat_obj_adt_rna_wnn,
+                          features = all_functional_genes,
+                          assay = "SCT") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
+  labs(title = "Functional Genes - ADT Clusters",
+       subtitle = paste0("RNA expression on ADT-driven clusters (", length(all_functional_genes), " genes)"),
+       x = "Functional Genes", y = "ADT Clusters") +
+  theme(axis.text.x = element_text(size = 7, angle = 45, hjust = 1))
+
+plot_and_save(p_adt_func_dot, "functional_adt_dotplot",
+              subfolder = "Functional_Genes",
+              width = max(18, length(all_functional_genes) * 0.35), height = 10)
+
+# ==================== ADT Heatmap ====================
+cat("【2/9】生成 ADT 功能基因 Heatmap...\n")
+
+p_adt_func_heat <- DoHeatmap(seurat_obj_adt_rna_wnn,
+                             features = all_functional_genes,
+                             assay = "SCT",
+                             group.by = "ADT_clusters") +
+  scale_fill_gradientn(colors = c("blue", "white", "red")) +
+  labs(title = "Functional Genes Heatmap - ADT Clusters",
+       subtitle = paste0("RNA expression on ADT-driven clusters (", length(all_functional_genes), " genes)")) +
+  theme(axis.text.y = element_text(size = 6))
+
+plot_and_save(p_adt_func_heat, "functional_adt_heatmap",
+              subfolder = "Functional_Genes",
+              width = 14, height = max(12, length(all_functional_genes) * 0.25))
+
+# ==================== ADT FeaturePlots (7组分别，在 ADT UMAP 上) ====================
+cat("【3/9】成熟基因 FeaturePlot (ADT)...\n")
+if (length(genes_mat_filt) > 0) {
+  p_adt_mat <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mat_filt,
+                           reduction = "adt_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Maturation Genes on ADT UMAP")
+  plot_and_save(p_adt_mat, "functional_adt_maturation_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_mat_filt) / 3) * 4)
+}
+
+cat("【4/9】调控基因 FeaturePlot (ADT)...\n")
+if (length(genes_reg_filt) > 0) {
+  p_adt_reg <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_reg_filt,
+                           reduction = "adt_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Regulatory Genes on ADT UMAP")
+  plot_and_save(p_adt_reg, "functional_adt_regulatory_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_reg_filt) / 3) * 4)
+}
+
+cat("【5/9】迁移基因 FeaturePlot (ADT)...\n")
+if (length(genes_mig_filt) > 0) {
+  p_adt_mig <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mig_filt,
+                           reduction = "adt_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Migration Genes on ADT UMAP")
+  plot_and_save(p_adt_mig, "functional_adt_migration_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_mig_filt) / 3) * 4)
+}
+
+cat("【6/9】标志物 FeaturePlot (ADT)...\n")
+if (length(genes_mark_filt) > 0) {
+  p_adt_mark <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mark_filt,
+                            reduction = "adt_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Marker Genes on ADT UMAP")
+  plot_and_save(p_adt_mark, "functional_adt_marker_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_mark_filt) / 3) * 4)
+}
+
+cat("【7/9】Th2响应基因 FeaturePlot (ADT)...\n")
+if (length(genes_th2_filt) > 0) {
+  p_adt_th2 <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_th2_filt,
+                           reduction = "adt_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Th2 Response Genes on ADT UMAP")
+  plot_and_save(p_adt_th2, "functional_adt_th2_response_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_th2_filt) / 3) * 4)
+}
+
+cat("【8/9】转录因子 FeaturePlot (ADT)...\n")
+if (length(genes_tf_filt) > 0) {
+  p_adt_tf <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_tf_filt,
+                          reduction = "adt_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Transcription Factors on ADT UMAP")
+  plot_and_save(p_adt_tf, "functional_adt_transcription_factors_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_tf_filt) / 3) * 4)
+}
+
+cat("【9/9】ADT 功能基因可视化完成\n\n")
+cat(strrep("=", 80), "\n")
+cat("✓ ADT 功能基因可视化完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+#### 8.6.4.3 WNN 功能基因可视化（基于 WNN_clusters）
+
+```{r wnn_functional_genes, fig.width=20, fig.height=12}
+################################################################################
+##################### WNN 功能基因可视化（WNN_clusters）##########################
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("📊 WNN 功能基因可视化（基于 WNN_clusters）\n")
+cat(strrep("=", 80), "\n\n")
+
+# 设置分析参数
+Idents(seurat_obj_adt_rna_wnn) <- "WNN_clusters"
+DefaultAssay(seurat_obj_adt_rna_wnn) <- "SCT"
+
+# ==================== WNN DotPlot ====================
+cat("【1/9】生成 WNN 功能基因 DotPlot...\n")
+
+p_wnn_func_dot <- DotPlot(seurat_obj_adt_rna_wnn,
+                          features = all_functional_genes,
+                          assay = "SCT") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
+  labs(title = "Functional Genes - WNN Clusters",
+       subtitle = paste0("Multimodal-driven clusters (", length(all_functional_genes), " genes)"),
+       x = "Functional Genes", y = "WNN Clusters") +
+  theme(axis.text.x = element_text(size = 7, angle = 45, hjust = 1))
+
+plot_and_save(p_wnn_func_dot, "functional_wnn_dotplot",
+              subfolder = "Functional_Genes",
+              width = max(18, length(all_functional_genes) * 0.35), height = 10)
+
+# ==================== WNN Heatmap ====================
+cat("【2/9】生成 WNN 功能基因 Heatmap...\n")
+
+p_wnn_func_heat <- DoHeatmap(seurat_obj_adt_rna_wnn,
+                             features = all_functional_genes,
+                             assay = "SCT",
+                             group.by = "WNN_clusters") +
+  scale_fill_gradientn(colors = c("blue", "white", "red")) +
+  labs(title = "Functional Genes Heatmap - WNN Clusters",
+       subtitle = paste0("Multimodal-integrated clusters (", length(all_functional_genes), " genes)")) +
+  theme(axis.text.y = element_text(size = 6))
+
+plot_and_save(p_wnn_func_heat, "functional_wnn_heatmap",
+              subfolder = "Functional_Genes",
+              width = 14, height = max(12, length(all_functional_genes) * 0.25))
+
+# ==================== WNN FeaturePlots (7组分别) ====================
+cat("【3/9】成熟基因 FeaturePlot (WNN)...\n")
+if (length(genes_mat_filt) > 0) {
+  p_wnn_mat <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mat_filt,
+                           reduction = "wnn_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Maturation Genes on WNN UMAP")
+  plot_and_save(p_wnn_mat, "functional_wnn_maturation_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_mat_filt) / 3) * 4)
+}
+
+cat("【4/9】调控基因 FeaturePlot (WNN)...\n")
+if (length(genes_reg_filt) > 0) {
+  p_wnn_reg <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_reg_filt,
+                           reduction = "wnn_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Regulatory Genes on WNN UMAP")
+  plot_and_save(p_wnn_reg, "functional_wnn_regulatory_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_reg_filt) / 3) * 4)
+}
+
+cat("【5/9】迁移基因 FeaturePlot (WNN)...\n")
+if (length(genes_mig_filt) > 0) {
+  p_wnn_mig <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mig_filt,
+                           reduction = "wnn_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Migration Genes on WNN UMAP")
+  plot_and_save(p_wnn_mig, "functional_wnn_migration_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_mig_filt) / 3) * 4)
+}
+
+cat("【6/9】标志物 FeaturePlot (WNN)...\n")
+if (length(genes_mark_filt) > 0) {
+  p_wnn_mark <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_mark_filt,
+                            reduction = "wnn_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Marker Genes on WNN UMAP")
+  plot_and_save(p_wnn_mark, "functional_wnn_marker_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_mark_filt) / 3) * 4)
+}
+
+cat("【7/9】Th2响应基因 FeaturePlot (WNN)...\n")
+if (length(genes_th2_filt) > 0) {
+  p_wnn_th2 <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_th2_filt,
+                           reduction = "wnn_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Th2 Response Genes on WNN UMAP")
+  plot_and_save(p_wnn_th2, "functional_wnn_th2_response_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_th2_filt) / 3) * 4)
+}
+
+cat("【8/9】转录因子 FeaturePlot (WNN)...\n")
+if (length(genes_tf_filt) > 0) {
+  p_wnn_tf <- FeaturePlot(seurat_obj_adt_rna_wnn, features = genes_tf_filt,
+                          reduction = "wnn_umap", ncol = 3, pt.size = 0.5) +
+    plot_annotation(title = "Transcription Factors on WNN UMAP")
+  plot_and_save(p_wnn_tf, "functional_wnn_transcription_factors_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_tf_filt) / 3) * 4)
+}
+
+cat("【9/9】WNN 功能基因可视化完成\n\n")
+cat(strrep("=", 80), "\n")
+cat("✓ WNN 功能基因可视化完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+#### 8.6.4.4 功能基因组可视化总结
+
+```{r functional_genes_summary}
+cat("\n", strrep("=", 80), "\n")
+cat("🎉 功能基因组可视化全部完成\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("📁 输出文件汇总（27张图）:\n\n")
+
+cat("【RNA 功能基因可视化】（9张图）\n")
+cat("  - functional_rna_dotplot.png/.pdf\n")
+cat("  - functional_rna_heatmap.png/.pdf\n")
+cat("  - functional_rna_maturation_featureplot.png/.pdf\n")
+cat("  - functional_rna_regulatory_featureplot.png/.pdf\n")
+cat("  - functional_rna_migration_featureplot.png/.pdf\n")
+cat("  - functional_rna_marker_featureplot.png/.pdf\n")
+cat("  - functional_rna_th2_response_featureplot.png/.pdf\n")
+cat("  - functional_rna_transcription_factors_featureplot.png/.pdf\n\n")
+
+cat("【ADT 功能基因可视化】（9张图）\n")
+cat("  - functional_adt_dotplot.png/.pdf\n")
+cat("  - functional_adt_heatmap.png/.pdf\n")
+cat("  - functional_adt_maturation_featureplot.png/.pdf\n")
+cat("  - functional_adt_regulatory_featureplot.png/.pdf\n")
+cat("  - functional_adt_migration_featureplot.png/.pdf\n")
+cat("  - functional_adt_marker_featureplot.png/.pdf\n")
+cat("  - functional_adt_th2_response_featureplot.png/.pdf\n")
+cat("  - functional_adt_transcription_factors_featureplot.png/.pdf\n\n")
+
+cat("【WNN 功能基因可视化】（9张图）\n")
+cat("  - functional_wnn_dotplot.png/.pdf\n")
+cat("  - functional_wnn_heatmap.png/.pdf\n")
+cat("  - functional_wnn_maturation_featureplot.png/.pdf\n")
+cat("  - functional_wnn_regulatory_featureplot.png/.pdf\n")
+cat("  - functional_wnn_migration_featureplot.png/.pdf\n")
+cat("  - functional_wnn_marker_featureplot.png/.pdf\n")
+cat("  - functional_wnn_th2_response_featureplot.png/.pdf\n")
+cat("  - functional_wnn_transcription_factors_featureplot.png/.pdf\n\n")
+
+cat("🎯 三模态对比解读建议:\n")
+cat("  1. DotPlot对比：比较 RNA/ADT/WNN 三种聚类的功能基因表达模式\n")
+cat("  2. Heatmap对比：识别三种聚类策略的基因表达整体差异\n")
+cat("  3. FeaturePlot对比：观察功能基因在不同 UMAP 空间的分布\n")
+cat("  4. 成熟基因：哪种聚类策略最能区分成熟 vs 未成熟 DC？\n")
+cat("  5. 迁移基因：migratory vs resident DC 在哪个 UMAP 上最清晰？\n")
+cat("  6. 转录因子：cDC1/cDC2 谱系标志在三种聚类中的一致性\n")
+cat("  7. 调控基因：免疫抑制性 DC 亚群在多模态整合后是否更清晰？\n\n")
+
+cat(strrep("=", 80), "\n\n")
 ```
 
 > **🔍 如何综合解读三模态可视化？**
