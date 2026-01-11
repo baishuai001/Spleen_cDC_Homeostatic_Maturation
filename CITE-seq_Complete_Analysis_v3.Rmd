@@ -708,12 +708,16 @@ if (analysis_mode %in% c("cDC1", "cDC2")) {
       rawDataRNA_filtered <- rawDataRNA[, combined_cells]
       rawDataADT_filtered <- rawDataADT[, combined_cells]
 
+      # 创建命名的批次信息向量
+      batch_vector <- combined_metadata$subset
+      names(batch_vector) <- combined_cells
+
       return(list(
         rawDataRNA = rawDataRNA_filtered,
         rawDataADT = rawDataADT_filtered,
         cells = combined_cells,
         metadata = combined_metadata,
-        batch_info = combined_metadata$subset,
+        batch_info = batch_vector,
         original_idents = combined_idents,
         cell_counts = sapply(all_cells, length),
         cell_types_list = all_cell_types
@@ -1165,7 +1169,19 @@ seurat_obj <- load_or_compute(
 
     # 添加批次信息(整合模式)
     if (analysis_mode == "integrated") {
-      seurat_obj$batch <- batch_info[colnames(seurat_obj)]
+      # 确保 batch_info 是命名向量
+      if (exists("batch_info", envir = .GlobalEnv) && !is.null(batch_info)) {
+        batch_labels <- batch_info[colnames(seurat_obj)]
+        # 验证是否有缺失值
+        if (any(is.na(batch_labels))) {
+          warning("部分细胞缺少批次信息")
+        }
+        seurat_obj$batch <- batch_labels
+        cat("    批次分布: cDC1 =", sum(batch_labels == "cDC1", na.rm = TRUE),
+            ", cDC2 =", sum(batch_labels == "cDC2", na.rm = TRUE), "\n")
+      } else {
+        stop("整合模式需要 batch_info，但未找到")
+      }
     }
 
     cat("  步骤 3/8: 运行 SCTransform...\n")
