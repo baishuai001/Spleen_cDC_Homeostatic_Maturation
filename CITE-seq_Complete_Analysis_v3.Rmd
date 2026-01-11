@@ -1122,14 +1122,43 @@ cat("  基因数:", nrow(sce_clean), "\n\n")
 
 ## 4.1 选择高变基因
 
-```{r hvg}
+```{r hvg, fig.width=8, fig.height=7}
 library(scran)
 
 dec <- modelGeneVar(sce_clean)
 
-# 可视化
-plot(dec$mean, dec$total, xlab="Mean log-expression", ylab="Variance")
-curve(metadata(dec)$trend(x), add=TRUE, col="blue", lwd=2)
+# 可视化（使用 ggplot2 以便保存）
+library(ggplot2)
+
+# 准备数据
+hvg_data <- data.frame(
+  mean = dec$mean,
+  total = dec$total
+)
+
+# 创建趋势线数据
+trend_x <- seq(min(dec$mean), max(dec$mean), length.out = 500)
+trend_y <- metadata(dec)$trend(trend_x)
+trend_data <- data.frame(x = trend_x, y = trend_y)
+
+# 绘图
+p_hvg <- ggplot(hvg_data, aes(x = mean, y = total)) +
+  geom_point(alpha = 0.3, size = 1) +
+  geom_line(data = trend_data, aes(x = x, y = y),
+            color = "blue", linewidth = 1.5) +
+  labs(title = "Highly Variable Genes Selection",
+       subtitle = paste0(config$project_name, " - Mean-Variance Relationship"),
+       x = "Mean log-expression",
+       y = "Variance") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5))
+
+print(p_hvg)
+
+# 保存图形
+plot_and_save(p_hvg, "highly_variable_genes",
+              subfolder = "Normalization", width = 8, height = 7)
 
 # 选择前 2000 个高变基因
 top_hvgs <- getTopHVGs(dec, n=2000)
@@ -1254,18 +1283,42 @@ p_umap <- DimPlot(seurat_obj, reduction = "umap", label = TRUE, cols = config$co
 p_tsne <- DimPlot(seurat_obj, reduction = "tsne", label = TRUE, cols = config$colors) +
   labs(title = paste0(config$project_name, " - tSNE"))
 
-print(p_umap + p_tsne)
+# 组合展示
+p_combined <- p_umap + p_tsne
+print(p_combined)
+
+# 保存组合图
+plot_and_save(p_combined, "clustering_umap_tsne",
+              subfolder = "Clustering", width = 14, height = 6)
+
+# 保存单独的高分辨率 UMAP
+plot_and_save(p_umap, "clustering_umap_only",
+              subfolder = "Clustering", width = 8, height = 7)
 
 # 如果是整合分析,显示批次分布
 if (analysis_mode == "integrated") {
   p_batch <- DimPlot(seurat_obj, reduction = "umap", group.by = "batch") +
-    labs(title = "Batch Distribution (cDC1 vs cDC2)")
+    labs(title = "Batch Distribution (cDC1 vs cDC2)",
+         subtitle = "Visualizing batch effect before/after Harmony correction")
 
   p_original <- DimPlot(seurat_obj, reduction = "umap", group.by = "original_cluster",
                        label = TRUE, repel = TRUE) +
-    labs(title = "Original Cell Type Annotations")
+    labs(title = "Original Cell Type Annotations",
+         subtitle = "Cell type labels from source datasets")
 
-  print(p_batch + p_original)
+  # 组合展示
+  p_integrated_qc <- p_batch + p_original
+  print(p_integrated_qc)
+
+  # 保存整合模式的额外图
+  plot_and_save(p_batch, "batch_distribution",
+                subfolder = "Clustering", width = 8, height = 7)
+
+  plot_and_save(p_original, "original_cell_type_annotations",
+                subfolder = "Clustering", width = 10, height = 8)
+
+  plot_and_save(p_integrated_qc, "integrated_batch_and_celltype",
+                subfolder = "Clustering", width = 16, height = 7)
 }
 ```
 
