@@ -1297,7 +1297,11 @@ plot_and_save(p_umap, "clustering_umap_only",
 
 # 如果是整合分析,显示批次分布
 if (analysis_mode == "integrated") {
-  p_batch <- DimPlot(seurat_obj, reduction = "umap", group.by = "batch") +
+  # 定义批次颜色（与 Section 8.1.2 保持一致）
+  batch_colors <- c("cDC1" = "#FF6B6B", "cDC2" = "#4ECDC4")  # Salmon 红 vs Turquoise 青
+
+  p_batch <- DimPlot(seurat_obj, reduction = "umap", group.by = "batch",
+                     cols = batch_colors) +
     labs(title = "Batch Distribution (cDC1 vs cDC2)",
          subtitle = "Visualizing batch effect before/after Harmony correction")
 
@@ -2405,8 +2409,8 @@ if (analysis_mode == "integrated") {
   # 检查是否有 batch 信息
   if ("batch" %in% colnames(seurat_obj_adt_rna_wnn@meta.data)) {
 
-    # 定义批次颜色
-    batch_colors <- c("cDC1" = "#E41A1C", "cDC2" = "#377EB8")  # 红色 vs 蓝色
+    # 定义批次颜色（柔和配色，视觉效果更好）
+    batch_colors <- c("cDC1" = "#FF6B6B", "cDC2" = "#4ECDC4")  # Salmon 红 vs Turquoise 青
 
     # ADT UMAP - 按批次着色
     p_adt_batch <- DimPlot(seurat_obj_adt_rna_wnn,
