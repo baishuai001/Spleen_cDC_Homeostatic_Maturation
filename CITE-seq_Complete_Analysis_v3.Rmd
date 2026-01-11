@@ -2465,35 +2465,53 @@ if (length(weight_cols) > 0) {
   rna_weight <- grep("RNA", weight_cols, value = TRUE, ignore.case = TRUE)[1]
   adt_weight <- grep("ADT", weight_cols, value = TRUE, ignore.case = TRUE)[1]
 
-  plots_to_combine <- list()
-
-  if (!is.na(rna_weight)) {
+  # 创建权重图（如果存在）
+  if (!is.na(rna_weight) && !is.na(adt_weight)) {
+    # 两个权重都存在，并排展示
     p_weight_rna <- VlnPlot(seurat_obj_adt_rna_wnn, features = rna_weight,
                            group.by = "WNN_clusters", pt.size = 0) +
       ggtitle("RNA Modality Weight") +
       labs(subtitle = "Higher = RNA-driven clustering") +
       NoLegend() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    plots_to_combine[[1]] <- p_weight_rna
-  }
 
-  if (!is.na(adt_weight)) {
     p_weight_adt <- VlnPlot(seurat_obj_adt_rna_wnn, features = adt_weight,
                            group.by = "WNN_clusters", pt.size = 0) +
       ggtitle("ADT Modality Weight") +
       labs(subtitle = "Higher = ADT-driven clustering") +
       NoLegend() +
       theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    plots_to_combine[[2]] <- p_weight_adt
-  }
 
-  if (length(plots_to_combine) > 0) {
-    p_weights <- wrap_plots(plots_to_combine, ncol = 2) +
+    # 使用 patchwork 组合（不使用 list）
+    p_weights <- p_weight_rna | p_weight_adt
+    p_weights <- p_weights +
       plot_annotation(title = "WNN Modality Weights across Clusters",
                      subtitle = "Weight distribution shows which modality drives clustering for each cluster")
 
     plot_and_save(p_weights, "wnn_modality_weights",
                   subfolder = "WNN", width = 12, height = 5)
+
+  } else if (!is.na(rna_weight)) {
+    # 只有 RNA 权重
+    p_weight_rna <- VlnPlot(seurat_obj_adt_rna_wnn, features = rna_weight,
+                           group.by = "WNN_clusters", pt.size = 0) +
+      ggtitle("RNA Modality Weight") +
+      labs(subtitle = "Higher = RNA-driven clustering") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+    plot_and_save(p_weight_rna, "wnn_modality_weights_rna",
+                  subfolder = "WNN", width = 8, height = 5)
+
+  } else if (!is.na(adt_weight)) {
+    # 只有 ADT 权重
+    p_weight_adt <- VlnPlot(seurat_obj_adt_rna_wnn, features = adt_weight,
+                           group.by = "WNN_clusters", pt.size = 0) +
+      ggtitle("ADT Modality Weight") +
+      labs(subtitle = "Higher = ADT-driven clustering") +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+    plot_and_save(p_weight_adt, "wnn_modality_weights_adt",
+                  subfolder = "WNN", width = 8, height = 5)
   }
 } else {
   cat("⚠️  未找到 WNN 权重列，可能是 WNN 整合未成功\n")
