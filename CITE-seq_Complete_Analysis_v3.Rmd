@@ -293,14 +293,80 @@ genes_functional <- c(
 # ==================== 成熟/激活相关基因 ====================
 # 用于评估 DC 的成熟和激活状态
 genes_maturation <- c(
-  "Ccr7",      # 成熟和迁移
-  "Cd83",      # 成熟 marker
-  "Cd86",      # 共刺激分子，激活
-  "Cd40",      # 共刺激分子，激活
-  "Il12b",     # 成熟 DC 分泌
-  "Relb",      # NF-κB 通路，成熟
-  "Ccl22",     # 趋化因子，吸引 Treg
-  "Fscn1"      # 成熟 DC marker
+  "Cd80",      # 共刺激分子 B7-1
+  "Cd86",      # 共刺激分子 B7-2
+  "Cd40",      # 共刺激分子，T 细胞激活
+  "Relb",      # NF-κB 通路，成熟必需
+  "Cd83"       # 成熟 DC 经典 marker
+)
+
+# ==================== 调控相关基因 ====================
+# 用于评估 DC 的免疫调控功能
+genes_regulatory <- c(
+  "Cd274",     # PD-L1，抑制性配体
+  "Pdcd1lg2",  # PD-L2，抑制性配体
+  "Cd200",     # 免疫抑制性分子
+  "Fas",       # 凋亡受体，免疫调控
+  "Aldh1a2",   # 维甲酸合成，诱导 Treg
+  "Socs1",     # 信号抑制蛋白
+  "Socs2"      # 信号抑制蛋白
+)
+
+# ==================== 迁移相关基因 ====================
+# 用于评估 DC 的迁移能力
+genes_migration <- c(
+  "Ccr7",      # 趋化因子受体，淋巴结归巢
+  "Myo1g",     # 肌球蛋白，细胞运动
+  "Cxcl16",    # 趋化因子
+  "Adam8",     # 金属蛋白酶，细胞迁移
+  "Icam1",     # 细胞粘附分子
+  "Fscn1",     # 束蛋白，树突形成
+  "Marcks",    # 肌球蛋白相关，细胞运动
+  "Marcksl1"   # MARCKS 相关蛋白
+)
+
+# ==================== 标志物基因 ====================
+# 用于 DC 亚群鉴定的核心 marker
+genes_marker <- c(
+  "H2-Ab1",    # MHCII，抗原提呈（注意：H2-b1 应为 H2-Ab1）
+  "Itgax",     # CD11c，DC 通用 marker
+  "Itgam",     # CD11b，髓系细胞 marker
+  "Itgae",     # CD103，组织驻留 DC
+  "Xcr1",      # cDC1 特异性 marker
+  "Sirpa",     # CD172a，cDC2 特异性 marker
+  "Cd24a"      # CD24，cDC 成熟 marker
+)
+
+# ==================== Th2 响应相关基因 ====================
+# 用于评估 DC 诱导 Th2 反应的能力
+genes_th2_response <- c(
+  "Il4ra",     # IL-4 受体，Th2 分化
+  "Il4i1",     # IL-4 诱导基因
+  "Ccl17",     # 趋化因子，吸引 Th2
+  "Ccl22",     # 趋化因子，吸引 Th2/Treg
+  "Tnfrsf4",   # OX40，T 细胞共刺激
+  "Stat6",     # Th2 分化信号转导
+  "Bcl2l1"     # 抗凋亡，细胞存活
+)
+
+# ==================== 转录因子 ====================
+# 用于评估 DC 发育和功能的关键转录因子
+genes_transcription_factors <- c(
+  "Spi1",      # PU.1，髓系分化主调控
+  "Zbtb46",    # DC 特异性转录因子
+  "Irf8",      # cDC1 分化必需
+  "Nfil3",     # cDC1 发育调控
+  "Id2",       # cDC1 分化必需
+  "Batf3",     # cDC1 分化主调控
+  "Irf4",      # cDC2 分化必需
+  "Cebpa",     # 髓系分化
+  "Cebpb",     # 炎症响应
+  "Zeb2",      # cDC 发育调控
+  "Klf4",      # 单核细胞分化
+  "Tbx21",     # T-bet，Th1 响应
+  "Rorc",      # RORγt，Th17 响应
+  "Notch2",    # cDC2 发育必需
+  "Nr4a3"      # 核受体，迁移 DC 特征
 )
 
 # ==================== 质控相关基因 ====================
@@ -349,9 +415,16 @@ cat("\n📊 基因列表配置完成:\n")
 cat("  - 主要基因 (genes_primary):", length(genes_primary), "个\n")
 cat("    前5个:", paste(genes_primary[1:min(5, length(genes_primary))], collapse = ", "), "\n")
 cat("  - 对比基因 (genes_comparison):", length(genes_comparison), "个\n")
-cat("    前5个:", paste(genes_comparison[1:min(5, length(genes_comparison))], collapse = ", "), "\n")
+cat("    前5个:", paste(genes_comparison[1:min(5, length(genes_comparison))], collapse = ", "), "\n\n")
+
+cat("📚 功能基因组:\n")
 cat("  - 功能基因 (genes_functional):", length(genes_functional), "个\n")
 cat("  - 成熟基因 (genes_maturation):", length(genes_maturation), "个\n")
+cat("  - 调控基因 (genes_regulatory):", length(genes_regulatory), "个\n")
+cat("  - 迁移基因 (genes_migration):", length(genes_migration), "个\n")
+cat("  - 标志物 (genes_marker):", length(genes_marker), "个\n")
+cat("  - Th2响应 (genes_th2_response):", length(genes_th2_response), "个\n")
+cat("  - 转录因子 (genes_transcription_factors):", length(genes_transcription_factors), "个\n")
 cat("  - 质控基因 (genes_qc):", length(genes_qc), "个\n\n")
 
 cat("💡 自定义提示：\n")
@@ -3167,6 +3240,255 @@ if (length(genes_for_wnn_featureplot) > 0) {
 cat("\n", strrep("=", 80), "\n")
 cat("✓ WNN Markers 可视化完成\n")
 cat(strrep("=", 80), "\n\n")
+```
+
+### 8.6.4 功能基因组可视化
+
+> **为什么需要功能基因组可视化？**
+>
+> 在完成三种聚类策略的 marker 对比后，我们需要从**功能视角**深入理解细胞亚群：
+> - **调控功能**：DC 的免疫抑制能力（PD-L1, PD-L2, Aldh1a2）
+> - **迁移能力**：DC 向淋巴结归巢（Ccr7, Fscn1, Marcks）
+> - **标志物鉴定**：核心 DC 亚群 marker（Xcr1, Sirpa, Itgax）
+> - **成熟状态**：共刺激分子表达（Cd80, Cd86, Cd40）
+> - **Th2 响应**：诱导 Th2 分化能力（Il4ra, Ccl17, Stat6）
+> - **转录调控**：发育和分化的转录因子（Batf3, Irf4, Zbtb46）
+>
+> **本节目标**：
+> 1. 整合展示所有7组功能基因的表达模式（DotPlot）
+> 2. 每组基因单独展示空间分布（FeaturePlot）
+> 3. 基于 WNN clustering，展示多模态整合后的功能状态
+
+#### 8.6.4.1 七组功能基因整合 DotPlot
+
+```{r functional_genes_dotplot, fig.width=20, fig.height=10}
+################################################################################
+##################### 七组功能基因整合 DotPlot ####################################
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("📊 七组功能基因整合可视化\n")
+cat(strrep("=", 80), "\n\n")
+
+# 设置分析参数（基于 WNN clusters）
+Idents(seurat_obj_adt_rna_wnn) <- "WNN_clusters"
+DefaultAssay(seurat_obj_adt_rna_wnn) <- "SCT"
+
+# 整合所有7组功能基因
+all_functional_genes <- c(
+  genes_maturation,              # 成熟 (5 genes)
+  genes_regulatory,              # 调控 (7 genes)
+  genes_migration,               # 迁移 (8 genes)
+  genes_marker,                  # 标志物 (7 genes)
+  genes_th2_response,            # Th2响应 (7 genes)
+  genes_transcription_factors    # 转录因子 (15 genes)
+)
+
+# 去重并过滤存在的基因
+all_functional_genes <- unique(all_functional_genes)
+all_functional_genes <- intersect(all_functional_genes, rownames(seurat_obj_adt_rna_wnn))
+
+cat("【功能基因统计】\n")
+cat("  - 成熟基因:", length(genes_maturation), "个\n")
+cat("  - 调控基因:", length(genes_regulatory), "个\n")
+cat("  - 迁移基因:", length(genes_migration), "个\n")
+cat("  - 标志物:", length(genes_marker), "个\n")
+cat("  - Th2响应:", length(genes_th2_response), "个\n")
+cat("  - 转录因子:", length(genes_transcription_factors), "个\n")
+cat("  - 总计（去重后）:", length(all_functional_genes), "个\n\n")
+
+# 创建整合 DotPlot
+cat("【1/8】生成七组功能基因整合 DotPlot...\n")
+
+p_functional_dotplot <- DotPlot(seurat_obj_adt_rna_wnn,
+                                features = all_functional_genes,
+                                assay = "SCT") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
+  labs(title = "Functional Gene Signatures across WNN Clusters",
+       subtitle = paste0("7 functional gene sets (", length(all_functional_genes), " genes total)"),
+       x = "Functional Genes", y = "WNN Clusters") +
+  theme(axis.text.x = element_text(size = 8, angle = 45, hjust = 1))
+
+plot_and_save(p_functional_dotplot, "functional_genes_integrated_dotplot",
+              subfolder = "Functional_Genes",
+              width = max(16, length(all_functional_genes) * 0.3), height = 10)
+
+cat("  ✓ 整合 DotPlot 已保存\n")
+```
+
+#### 8.6.4.2 成熟基因 FeaturePlot
+
+```{r maturation_genes_featureplot, fig.width=12, fig.height=8}
+cat("\n【2/8】成熟基因（Maturation）FeaturePlot...\n")
+
+genes_maturation_filtered <- intersect(genes_maturation, rownames(seurat_obj_adt_rna_wnn))
+
+if (length(genes_maturation_filtered) > 0) {
+  p_maturation_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                                   features = genes_maturation_filtered,
+                                   reduction = "wnn_umap",
+                                   ncol = 3,
+                                   pt.size = 0.5) +
+    plot_annotation(title = "Maturation Genes Expression on WNN UMAP",
+                   subtitle = paste0(length(genes_maturation_filtered), " genes: Cd80, Cd86, Cd40, Relb, Cd83"))
+
+  plot_and_save(p_maturation_feat, "functional_genes_maturation_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_maturation_filtered) / 3) * 4)
+
+  cat("  ✓ 成熟基因 FeaturePlot 已保存 (", length(genes_maturation_filtered), "个基因)\n")
+}
+```
+
+#### 8.6.4.3 调控基因 FeaturePlot
+
+```{r regulatory_genes_featureplot, fig.width=12, fig.height=8}
+cat("\n【3/8】调控基因（Regulatory）FeaturePlot...\n")
+
+genes_regulatory_filtered <- intersect(genes_regulatory, rownames(seurat_obj_adt_rna_wnn))
+
+if (length(genes_regulatory_filtered) > 0) {
+  p_regulatory_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                                   features = genes_regulatory_filtered,
+                                   reduction = "wnn_umap",
+                                   ncol = 3,
+                                   pt.size = 0.5) +
+    plot_annotation(title = "Regulatory Genes Expression on WNN UMAP",
+                   subtitle = paste0(length(genes_regulatory_filtered), " genes: PD-L1/L2, Cd200, Fas, Aldh1a2, Socs1/2"))
+
+  plot_and_save(p_regulatory_feat, "functional_genes_regulatory_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_regulatory_filtered) / 3) * 4)
+
+  cat("  ✓ 调控基因 FeaturePlot 已保存 (", length(genes_regulatory_filtered), "个基因)\n")
+}
+```
+
+#### 8.6.4.4 迁移基因 FeaturePlot
+
+```{r migration_genes_featureplot, fig.width=12, fig.height=10}
+cat("\n【4/8】迁移基因（Migration）FeaturePlot...\n")
+
+genes_migration_filtered <- intersect(genes_migration, rownames(seurat_obj_adt_rna_wnn))
+
+if (length(genes_migration_filtered) > 0) {
+  p_migration_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                                  features = genes_migration_filtered,
+                                  reduction = "wnn_umap",
+                                  ncol = 3,
+                                  pt.size = 0.5) +
+    plot_annotation(title = "Migration Genes Expression on WNN UMAP",
+                   subtitle = paste0(length(genes_migration_filtered), " genes: Ccr7, Myo1g, Fscn1, Marcks, etc."))
+
+  plot_and_save(p_migration_feat, "functional_genes_migration_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_migration_filtered) / 3) * 4)
+
+  cat("  ✓ 迁移基因 FeaturePlot 已保存 (", length(genes_migration_filtered), "个基因)\n")
+}
+```
+
+#### 8.6.4.5 标志物 FeaturePlot
+
+```{r marker_genes_featureplot, fig.width=12, fig.height=8}
+cat("\n【5/8】标志物（Marker）FeaturePlot...\n")
+
+genes_marker_filtered <- intersect(genes_marker, rownames(seurat_obj_adt_rna_wnn))
+
+if (length(genes_marker_filtered) > 0) {
+  p_marker_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                               features = genes_marker_filtered,
+                               reduction = "wnn_umap",
+                               ncol = 3,
+                               pt.size = 0.5) +
+    plot_annotation(title = "Core Marker Genes Expression on WNN UMAP",
+                   subtitle = paste0(length(genes_marker_filtered), " genes: Xcr1, Sirpa, Itgax, Itgae, etc."))
+
+  plot_and_save(p_marker_feat, "functional_genes_marker_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_marker_filtered) / 3) * 4)
+
+  cat("  ✓ 标志物 FeaturePlot 已保存 (", length(genes_marker_filtered), "个基因)\n")
+}
+```
+
+#### 8.6.4.6 Th2 响应基因 FeaturePlot
+
+```{r th2_response_genes_featureplot, fig.width=12, fig.height=8}
+cat("\n【6/8】Th2 响应基因（Th2 Response）FeaturePlot...\n")
+
+genes_th2_response_filtered <- intersect(genes_th2_response, rownames(seurat_obj_adt_rna_wnn))
+
+if (length(genes_th2_response_filtered) > 0) {
+  p_th2_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                            features = genes_th2_response_filtered,
+                            reduction = "wnn_umap",
+                            ncol = 3,
+                            pt.size = 0.5) +
+    plot_annotation(title = "Th2 Response Genes Expression on WNN UMAP",
+                   subtitle = paste0(length(genes_th2_response_filtered), " genes: Il4ra, Ccl17, Ccl22, Stat6, etc."))
+
+  plot_and_save(p_th2_feat, "functional_genes_th2_response_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_th2_response_filtered) / 3) * 4)
+
+  cat("  ✓ Th2响应基因 FeaturePlot 已保存 (", length(genes_th2_response_filtered), "个基因)\n")
+}
+```
+
+#### 8.6.4.7 转录因子 FeaturePlot
+
+```{r transcription_factors_featureplot, fig.width=12, fig.height=16}
+cat("\n【7/8】转录因子（Transcription Factors）FeaturePlot...\n")
+
+genes_transcription_factors_filtered <- intersect(genes_transcription_factors, rownames(seurat_obj_adt_rna_wnn))
+
+if (length(genes_transcription_factors_filtered) > 0) {
+  p_tf_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                           features = genes_transcription_factors_filtered,
+                           reduction = "wnn_umap",
+                           ncol = 3,
+                           pt.size = 0.5) +
+    plot_annotation(title = "Transcription Factors Expression on WNN UMAP",
+                   subtitle = paste0(length(genes_transcription_factors_filtered),
+                                    " genes: Batf3, Irf4, Irf8, Zbtb46, etc."))
+
+  plot_and_save(p_tf_feat, "functional_genes_transcription_factors_featureplot",
+                subfolder = "Functional_Genes",
+                width = 12, height = ceiling(length(genes_transcription_factors_filtered) / 3) * 4)
+
+  cat("  ✓ 转录因子 FeaturePlot 已保存 (", length(genes_transcription_factors_filtered), "个基因)\n")
+}
+```
+
+#### 8.6.4.8 功能基因组总结
+
+```{r functional_genes_summary}
+cat("\n【8/8】功能基因组可视化完成\n")
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 功能基因组可视化完成\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("📁 输出文件汇总:\n")
+cat("  子文件夹: Functional_Genes/\n")
+cat("  - 整合 DotPlot: functional_genes_integrated_dotplot.png/.pdf\n")
+cat("  - 成熟基因 FeaturePlot: functional_genes_maturation_featureplot.png/.pdf\n")
+cat("  - 调控基因 FeaturePlot: functional_genes_regulatory_featureplot.png/.pdf\n")
+cat("  - 迁移基因 FeaturePlot: functional_genes_migration_featureplot.png/.pdf\n")
+cat("  - 标志物 FeaturePlot: functional_genes_marker_featureplot.png/.pdf\n")
+cat("  - Th2响应 FeaturePlot: functional_genes_th2_response_featureplot.png/.pdf\n")
+cat("  - 转录因子 FeaturePlot: functional_genes_transcription_factors_featureplot.png/.pdf\n\n")
+
+cat("🎯 解读建议:\n")
+cat("  1. 整合 DotPlot：识别每个 WNN cluster 的功能特征组合\n")
+cat("  2. 成熟基因：识别成熟 vs 未成熟 DC 亚群\n")
+cat("  3. 调控基因：识别具有免疫抑制功能的 DC\n")
+cat("  4. 迁移基因：识别 migratory vs resident DC\n")
+cat("  5. 标志物：验证 cDC1/cDC2 亚群鉴定\n")
+cat("  6. Th2响应：识别诱导 Th2 极化的 DC\n")
+cat("  7. 转录因子：理解 DC 发育和分化状态\n\n")
 ```
 
 > **🔍 如何综合解读三模态可视化？**
