@@ -2217,184 +2217,6 @@ write.csv(exp.markers, deg_csv, row.names = FALSE)
 cat("\n✓ 差异基因列表已保存:", deg_csv, "\n\n")
 ```
 
-## 7.1 差异基因可视化
-
-> **如何解读差异基因分析结果？**
->
-> 差异基因分析（DEG）通过比较不同cluster之间的基因表达，帮助我们理解：
-> 1. **细胞类型鉴定**：每个cluster的marker基因是什么？
-> 2. **功能状态**：cluster之间的功能差异（如增殖、活化、成熟）
-> 3. **质量控制**：是否存在技术性cluster（如高线粒体cluster）
->
-> **三种互补的可视化方法**：
-> - **DotPlot（气泡图）**：同时展示表达比例和表达强度，适合比较多个marker
-> - **Heatmap（热图）**：展示基因表达的整体模式，识别共表达基因群
-> - **FeaturePlot（特征图）**：展示marker在UMAP上的空间分布，验证cluster特异性
-
-```{r deg_visualization, fig.width=14, fig.height=10}
-################################################################################
-##################### 差异基因可视化 ##############################################
-################################################################################
-#
-# 【功能说明】
-# 使用三种互补的方法可视化差异表达基因，帮助鉴定细胞类型和功能状态
-#
-# 【可视化策略】
-# 策略1：优先使用 Section 1.4 中定义的 marker 基因（如果在 top markers 中）
-# 策略2：补充 top DEG markers（数据驱动的发现）
-# 策略3：根据 analysis_mode 自动选择相关基因
-#
-################################################################################
-
-cat("\n", strrep("=", 80), "\n")
-cat("📊 差异基因可视化\n")
-cat(strrep("=", 80), "\n\n")
-
-# ==================== 智能基因选择 ====================
-# 策略：优先使用预定义的 marker 基因（Section 1.4），补充 top DEG
-
-# 提取 top DEG markers
-top_deg_genes <- unique(top5_markers$gene)
-
-# 根据 analysis_mode 选择基因
-genes_for_dotplot <- c()
-genes_for_heatmap <- c()
-genes_for_featureplot <- c()
-
-if (analysis_mode == "cDC1") {
-  # cDC1 模式：重点展示 cDC1 markers 和成熟相关基因
-  genes_for_dotplot <- unique(c(genes_cDC1, genes_maturation,
-                                intersect(top_deg_genes, genes_cDC2)))  # 也展示部分 cDC2 对比
-  genes_for_featureplot <- genes_cDC1[1:min(6, length(genes_cDC1))]
-} else if (analysis_mode == "cDC2") {
-  # cDC2 模式：重点展示 cDC2 markers 和成熟相关基因
-  genes_for_dotplot <- unique(c(genes_cDC2, genes_maturation,
-                                intersect(top_deg_genes, genes_cDC1)))
-  genes_for_featureplot <- genes_cDC2[1:min(6, length(genes_cDC2))]
-} else if (analysis_mode == "integrated") {
-  # 整合模式：展示 cDC1, cDC2, 成熟基因
-  genes_for_dotplot <- unique(c(genes_cDC1, genes_cDC2, genes_maturation))
-  genes_for_featureplot <- unique(c(genes_cDC1[1:3], genes_cDC2[1:3]))
-} else if (analysis_mode == "full") {
-  # 全量模式：展示 lineage markers 和功能基因
-  genes_for_dotplot <- unique(c(genes_lineage, genes_functional))
-  genes_for_featureplot <- genes_lineage[1:min(6, length(genes_lineage))]
-}
-
-# 补充 top DEG（如果预定义基因不够）
-if (length(genes_for_dotplot) < 15) {
-  additional_genes <- setdiff(top_deg_genes, genes_for_dotplot)
-  genes_for_dotplot <- c(genes_for_dotplot, additional_genes[1:min(15 - length(genes_for_dotplot), length(additional_genes))])
-}
-
-# 热图使用前 30 个 top DEG（展示整体模式）
-genes_for_heatmap <- top_deg_genes[1:min(30, length(top_deg_genes))]
-
-# 只保留实际存在的基因
-genes_for_dotplot <- intersect(genes_for_dotplot, rownames(seurat_obj_clean))
-genes_for_heatmap <- intersect(genes_for_heatmap, rownames(seurat_obj_clean))
-genes_for_featureplot <- intersect(genes_for_featureplot, rownames(seurat_obj_clean))
-
-cat("【可视化基因选择】\n")
-cat("  DotPlot:", length(genes_for_dotplot), "个基因 -", paste(head(genes_for_dotplot, 10), collapse = ", "), "...\n")
-cat("  Heatmap:", length(genes_for_heatmap), "个基因\n")
-cat("  FeaturePlot:", length(genes_for_featureplot), "个基因 -", paste(genes_for_featureplot, collapse = ", "), "\n\n")
-
-# ==================== 可视化1：DotPlot（气泡图）====================
-# 用途：同时展示基因的表达比例（点大小）和表达强度（颜色）
-# 解读：
-#   - 大而红的点：该基因在该 cluster 中高表达且表达细胞比例高（理想 marker）
-#   - 大而蓝的点：虽然很多细胞表达，但表达强度低
-#   - 小点：表达细胞比例低
-
-cat("【可视化 1】DotPlot - 同时展示表达比例和强度\n")
-
-p_dot <- DotPlot(seurat_obj_clean, features = genes_for_dotplot, assay = "SCT") +
-  RotatedAxis() +
-  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
-  labs(title = "Marker Expression across Clusters",
-       subtitle = paste0("Dot size = % expressing | Color = expression level"),
-       x = "Marker Genes", y = "Clusters") +
-  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
-
-# 保存 DotPlot
-plot_and_save(p_dot, "deg_dotplot_markers", subfolder = "DEG",
-              width = max(12, length(genes_for_dotplot) * 0.4), height = 8)
-
-# ==================== 可视化2：Heatmap（热图）====================
-# 用途：展示基因表达的整体模式，识别共表达基因群
-# 解读：
-#   - 垂直条纹：某个 cluster 特异性高表达一组基因
-#   - 水平条纹：某些基因在多个 cluster 中共表达
-#   - 梯度变化：基因表达的连续变化（如成熟过程）
-
-cat("\n【可视化 2】Heatmap - 展示基因表达的整体模式\n")
-
-# 需要先对基因进行 ScaleData（Z-score 标准化）
-seurat_obj_clean <- ScaleData(seurat_obj_clean, features = genes_for_heatmap, verbose = FALSE)
-
-p_heat <- DoHeatmap(seurat_obj_clean, features = genes_for_heatmap, assay = "SCT") +
-  scale_fill_gradientn(colors = c("blue", "white", "red")) +
-  labs(title = "Top Marker Expression Heatmap",
-       subtitle = paste0("Top ", length(genes_for_heatmap), " DEG genes across clusters")) +
-  theme(axis.text.y = element_text(size = 8))
-
-# 保存 Heatmap
-plot_and_save(p_heat, "deg_heatmap_top_markers", subfolder = "DEG",
-              width = 12, height = max(10, length(genes_for_heatmap) * 0.25))
-
-# ==================== 可视化3：FeaturePlot（特征图）====================
-# 用途：展示 marker 在 UMAP 上的空间分布
-# 解读：
-#   - 如果 marker 仅在某个 cluster 高表达 → cluster 特异性好
-#   - 如果 marker 在多个 cluster 高表达 → 共享的功能状态
-#   - 梯度分布：成熟或功能状态的连续变化
-
-cat("\n【可视化 3】FeaturePlot - 展示 markers 的空间分布\n")
-
-if (length(genes_for_featureplot) > 0) {
-  p_feat <- FeaturePlot(seurat_obj_clean,
-                       features = genes_for_featureplot,
-                       reduction = "umap",
-                       ncol = 3,
-                       pt.size = 0.5) +
-    plot_annotation(title = paste0("Key Marker Expression on UMAP - ", config$project_name),
-                   subtitle = "Expression level shown as color intensity")
-
-  # 保存 FeaturePlot
-  plot_and_save(p_feat, "deg_featureplot_key_markers", subfolder = "DEG",
-                width = 12, height = ceiling(length(genes_for_featureplot) / 3) * 4)
-
-  cat("  ✓ FeaturePlot 包含", length(genes_for_featureplot), "个关键 marker\n")
-} else {
-  cat("  ⚠️  没有可用的 marker 基因用于 FeaturePlot\n")
-}
-
-cat("\n", strrep("=", 80), "\n")
-cat("✓ 差异基因可视化完成\n")
-cat(strrep("=", 80), "\n\n")
-```
-
-> **🔍 如何综合解读这三种可视化？**
->
-> **步骤1：从 DotPlot 识别 cluster 特异性 marker**
-> - 查找每个 cluster 的"大而红"的点
-> - 例如：Cluster 0 高表达 Xcr1, Clec9a → 可能是 cDC1
->
-> **步骤2：从 Heatmap 识别基因表达模式**
-> - 查找垂直条纹（cluster 特异性）
-> - 查找水平条纹（共享的功能状态）
-> - 例如：Ccr7, Cd83 在多个 cluster 高表达 → 成熟 DC
->
-> **步骤3：从 FeaturePlot 验证空间分布**
-> - 确认 marker 是否真的局限于某个 cluster
-> - 检查是否有梯度分布（提示连续的生物学过程）
->
-> **常见模式**：
-> - **清晰的细胞类型**：DotPlot 中每个 cluster 有 3-5 个特异性 marker
-> - **功能状态连续变化**：FeaturePlot 中基因呈梯度分布（如 Ccr7 从低到高）
-> - **技术性 cluster**：Heatmap 中某个 cluster 主要富集线粒体/核糖体基因 → 可能需要删除
-
 ---
 
 # 8. ADT 分析和 WNN 融合
@@ -2678,7 +2500,94 @@ if (length(weight_cols) > 0) {
 }
 ```
 
-## 8.4 WNN 差异基因分析
+## 8.4 ADT 差异标志物分析
+
+> **为什么需要单独分析 ADT markers？**
+>
+> CITE-seq 同时测量了蛋白（ADT）和转录组（RNA），两者提供互补信息：
+> - **ADT markers**：基于表面蛋白表达的细胞类型鉴定（稳定、直接）
+> - **RNA markers**：基于转录组的细胞状态和功能分析（动态、全面）
+> - **WNN markers**：整合两者优势的综合分析
+>
+> 本节专注于 **ADT-driven clusters** 的蛋白标志物分析，识别基于表面蛋白表达的细胞亚群。
+
+```{r adt_deg}
+################################################################################
+##################### ADT 差异标志物分析 ##########################################
+################################################################################
+#
+# 【功能说明】
+# 基于 ADT-driven clustering（Section 8, step 3/9）的结果，
+# 识别每个 ADT cluster 的差异表达蛋白标志物
+#
+# 【分析策略】
+# - 使用 ADT assay 的归一化数据（CLR 标准化）
+# - 基于 ADT_clusters 分组
+# - 识别每个 cluster 的特异性蛋白 markers
+#
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("🔬 ADT 差异标志物分析\n")
+cat(strrep("=", 80), "\n\n")
+
+# 设置分析对象
+Idents(seurat_obj_adt_rna_wnn) <- "ADT_clusters"
+DefaultAssay(seurat_obj_adt_rna_wnn) <- "ADT"
+
+# 计算 ADT markers
+adt_markers <- load_or_compute(
+  cache_file = paste0(config$cache_prefix, "_08_adt_markers.rds"),
+  description = paste0("ADT 差异标志物分析 - ", config$cache_prefix),
+  compute_fn = function() {
+    cat("  正在分析 ADT-driven clusters 的蛋白标志物...\n")
+    cat("  ADT clusters:", length(unique(seurat_obj_adt_rna_wnn$ADT_clusters)), "个\n")
+    cat("  ADT features:", nrow(seurat_obj_adt_rna_wnn[["ADT"]]), "个\n\n")
+
+    markers <- FindAllMarkers(
+      seurat_obj_adt_rna_wnn,
+      assay = "ADT",
+      slot = "data",          # 使用归一化数据（CLR）
+      only.pos = TRUE,        # 只保留上调的 markers
+      min.pct = 0.1,          # 至少在 10% 细胞中表达
+      logfc.threshold = 0.25, # log2FC > 0.25（约 1.2 倍差异）
+      verbose = FALSE
+    )
+
+    cat("\n  找到", nrow(markers), "个差异表达 ADT 标志物\n")
+    return(markers)
+  }
+)
+
+# Top 5 ADT markers per cluster
+top5_adt_markers <- adt_markers %>%
+  group_by(cluster) %>%
+  slice_max(n = 5, order_by = avg_log2FC)
+
+cat("\nTop 5 ADT Markers per ADT Cluster:\n")
+print(top5_adt_markers)
+
+# 保存 ADT markers
+adt_markers_csv <- paste0(output.dir, "Files/", config$project_name, "_ADT_markers.csv")
+write.csv(adt_markers, adt_markers_csv, row.names = FALSE)
+cat("\n✓ ADT 差异标志物列表已保存:", adt_markers_csv, "\n")
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ ADT 差异标志物分析完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+## 8.5 WNN 差异基因分析
+
+> **WNN markers 的意义**
+>
+> WNN (Weighted Nearest Neighbor) 整合了 RNA 和 ADT 两种模态，
+> 基于 **WNN-driven clusters** 分析差异基因可以：
+> - 识别整合后的细胞亚群的转录组特征
+> - 结合蛋白和转录组信息的综合细胞类型鉴定
+> - 发现多模态驱动的生物学状态（如成熟、活化）
 
 ```{r wnn_deg}
 Idents(seurat_obj_adt_rna_wnn) <- "WNN_clusters"
@@ -2700,6 +2609,458 @@ wnn_deg_csv <- paste0(output.dir, "Files/", config$project_name, "_WNN_DEG.csv")
 write.csv(wnn_markers, wnn_deg_csv, row.names = FALSE)
 cat("✓ WNN 差异基因列表已保存:", wnn_deg_csv, "\n\n")
 ```
+
+---
+
+## 8.6 多模态 Marker 综合可视化
+
+> **为什么需要多模态综合可视化？**
+>
+> CITE-seq 的核心优势是**同时测量 RNA 和 ADT**，因此需要系统性对比三种聚类策略的 marker：
+> - **RNA-driven markers** (Section 7)：基于转录组的差异基因
+> - **ADT-driven markers** (Section 8.4)：基于表面蛋白的差异标志物
+> - **WNN-driven markers** (Section 8.5)：整合多模态后的差异基因
+>
+> **本节目标**：
+> 1. 并排对比三种策略的 marker 表达模式
+> 2. 验证 RNA 和蛋白的一致性
+> 3. 发现多模态整合带来的新见解
+>
+> **可视化策略**：
+> - **DotPlot**：同时展示表达比例和强度，识别 cluster 特异性 marker
+> - **Heatmap**：展示整体表达模式，识别共表达基因群
+> - **FeaturePlot**：验证 marker 的空间分布和 cluster 特异性
+
+### 8.6.1 RNA Markers 可视化（基于 SCT_clusters）
+
+```{r rna_markers_visualization, fig.width=14, fig.height=10}
+################################################################################
+##################### RNA Markers 可视化 ##########################################
+################################################################################
+#
+# 【功能说明】
+# 可视化基于 RNA-driven clustering (SCT_clusters) 的差异基因
+#
+# 【数据来源】
+# - exp.markers (Section 7)：RNA 差异基因分析结果
+# - SCT_clusters：RNA 驱动的聚类结果
+# - "umap" reduction：RNA 驱动的 UMAP 降维
+#
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("📊 RNA Markers 可视化（SCT_clusters）\n")
+cat(strrep("=", 80), "\n\n")
+
+# 设置分析参数
+Idents(seurat_obj_adt_rna_wnn) <- "SCT_clusters"
+DefaultAssay(seurat_obj_adt_rna_wnn) <- "SCT"
+
+# ==================== 智能基因选择 ====================
+# 策略：优先使用预定义的 marker 基因（Section 1.4），补充 top DEG
+
+# 提取 top DEG markers (使用 Section 7 的结果)
+top_deg_genes <- unique(top5_markers$gene)
+
+# 根据 analysis_mode 选择基因
+genes_for_rna_dotplot <- c()
+genes_for_rna_heatmap <- c()
+genes_for_rna_featureplot <- c()
+
+if (analysis_mode == "cDC1") {
+  genes_for_rna_dotplot <- unique(c(genes_cDC1, genes_maturation,
+                                    intersect(top_deg_genes, genes_cDC2)))
+  genes_for_rna_featureplot <- genes_cDC1[1:min(6, length(genes_cDC1))]
+} else if (analysis_mode == "cDC2") {
+  genes_for_rna_dotplot <- unique(c(genes_cDC2, genes_maturation,
+                                    intersect(top_deg_genes, genes_cDC1)))
+  genes_for_rna_featureplot <- genes_cDC2[1:min(6, length(genes_cDC2))]
+} else if (analysis_mode == "integrated") {
+  genes_for_rna_dotplot <- unique(c(genes_cDC1, genes_cDC2, genes_maturation))
+  genes_for_rna_featureplot <- unique(c(genes_cDC1[1:3], genes_cDC2[1:3]))
+} else if (analysis_mode == "full") {
+  genes_for_rna_dotplot <- unique(c(genes_lineage, genes_functional))
+  genes_for_rna_featureplot <- genes_lineage[1:min(6, length(genes_lineage))]
+}
+
+# 补充 top DEG（如果预定义基因不够）
+if (length(genes_for_rna_dotplot) < 15) {
+  additional_genes <- setdiff(top_deg_genes, genes_for_rna_dotplot)
+  genes_for_rna_dotplot <- c(genes_for_rna_dotplot,
+                             additional_genes[1:min(15 - length(genes_for_rna_dotplot),
+                                                   length(additional_genes))])
+}
+
+# 热图使用前 30 个 top DEG
+genes_for_rna_heatmap <- top_deg_genes[1:min(30, length(top_deg_genes))]
+
+# 只保留实际存在的基因
+genes_for_rna_dotplot <- intersect(genes_for_rna_dotplot, rownames(seurat_obj_adt_rna_wnn))
+genes_for_rna_heatmap <- intersect(genes_for_rna_heatmap, rownames(seurat_obj_adt_rna_wnn))
+genes_for_rna_featureplot <- intersect(genes_for_rna_featureplot, rownames(seurat_obj_adt_rna_wnn))
+
+cat("【RNA 可视化基因选择】\n")
+cat("  DotPlot:", length(genes_for_rna_dotplot), "个基因\n")
+cat("  Heatmap:", length(genes_for_rna_heatmap), "个基因\n")
+cat("  FeaturePlot:", length(genes_for_rna_featureplot), "个基因\n\n")
+
+# ==================== RNA DotPlot ====================
+cat("【1/3】生成 RNA DotPlot...\n")
+
+p_rna_dot <- DotPlot(seurat_obj_adt_rna_wnn,
+                     features = genes_for_rna_dotplot,
+                     assay = "SCT") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
+  labs(title = "RNA Markers - SCT Clusters",
+       subtitle = paste0("Dot size = % expressing | Color = expression level"),
+       x = "Marker Genes", y = "SCT Clusters") +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
+
+plot_and_save(p_rna_dot, "multimodal_rna_dotplot",
+              subfolder = "Multimodal_Markers",
+              width = max(12, length(genes_for_rna_dotplot) * 0.4), height = 8)
+
+# ==================== RNA Heatmap ====================
+cat("【2/3】生成 RNA Heatmap...\n")
+
+# ScaleData 用于热图
+seurat_obj_adt_rna_wnn <- ScaleData(seurat_obj_adt_rna_wnn,
+                                    features = genes_for_rna_heatmap,
+                                    verbose = FALSE)
+
+p_rna_heat <- DoHeatmap(seurat_obj_adt_rna_wnn,
+                        features = genes_for_rna_heatmap,
+                        assay = "SCT",
+                        group.by = "SCT_clusters") +
+  scale_fill_gradientn(colors = c("blue", "white", "red")) +
+  labs(title = "RNA Markers Heatmap - SCT Clusters",
+       subtitle = paste0("Top ", length(genes_for_rna_heatmap), " DEG genes")) +
+  theme(axis.text.y = element_text(size = 8))
+
+plot_and_save(p_rna_heat, "multimodal_rna_heatmap",
+              subfolder = "Multimodal_Markers",
+              width = 12, height = max(10, length(genes_for_rna_heatmap) * 0.25))
+
+# ==================== RNA FeaturePlot ====================
+cat("【3/3】生成 RNA FeaturePlot...\n")
+
+if (length(genes_for_rna_featureplot) > 0) {
+  p_rna_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                            features = genes_for_rna_featureplot,
+                            reduction = "umap",
+                            ncol = 3,
+                            pt.size = 0.5) +
+    plot_annotation(title = "RNA Markers on UMAP (SCT-driven)",
+                   subtitle = "Expression level shown as color intensity")
+
+  plot_and_save(p_rna_feat, "multimodal_rna_featureplot",
+                subfolder = "Multimodal_Markers",
+                width = 12, height = ceiling(length(genes_for_rna_featureplot) / 3) * 4)
+}
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ RNA Markers 可视化完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+### 8.6.2 ADT Markers 可视化（基于 ADT_clusters）
+
+```{r adt_markers_visualization, fig.width=14, fig.height=10}
+################################################################################
+##################### ADT Markers 可视化 ##########################################
+################################################################################
+#
+# 【功能说明】
+# 可视化基于 ADT-driven clustering (ADT_clusters) 的差异蛋白标志物
+#
+# 【数据来源】
+# - adt_markers (Section 8.4)：ADT 差异标志物分析结果
+# - ADT_clusters：ADT 驱动的聚类结果
+# - "adt_umap" reduction：ADT 驱动的 UMAP 降维
+#
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("🔬 ADT Markers 可视化（ADT_clusters）\n")
+cat(strrep("=", 80), "\n\n")
+
+# 设置分析参数
+Idents(seurat_obj_adt_rna_wnn) <- "ADT_clusters"
+DefaultAssay(seurat_obj_adt_rna_wnn) <- "ADT"
+
+# ==================== 智能 ADT 选择 ====================
+# 提取 top ADT markers
+top_adt_genes <- unique(top5_adt_markers$gene)
+
+# 根据 analysis_mode 选择 ADT features
+genes_for_adt_dotplot <- c()
+genes_for_adt_heatmap <- c()
+genes_for_adt_featureplot <- c()
+
+# 获取所有可用的 ADT features
+all_adt_features <- rownames(seurat_obj_adt_rna_wnn[["ADT"]])
+
+# 优先选择预定义的 ADT markers（如果在数据中存在）
+# 常见的 cDC markers（蛋白层面）
+common_dc_adt <- c("CD11c", "CD11b", "CD8a", "CD4", "MHCII", "CD40",
+                   "CD80", "CD86", "CCR7", "CD103", "XCR1", "CLEC9A", "SIRPA")
+
+# 查找匹配的 ADT features（忽略大小写，支持部分匹配）
+matched_adt <- c()
+for (marker in common_dc_adt) {
+  matches <- grep(marker, all_adt_features, ignore.case = TRUE, value = TRUE)
+  if (length(matches) > 0) {
+    matched_adt <- c(matched_adt, matches[1])  # 取第一个匹配
+  }
+}
+
+# 组合预定义 ADT 和 top markers
+genes_for_adt_dotplot <- unique(c(matched_adt, top_adt_genes))
+genes_for_adt_heatmap <- top_adt_genes[1:min(20, length(top_adt_genes))]  # ADT 通常较少
+genes_for_adt_featureplot <- genes_for_adt_dotplot[1:min(6, length(genes_for_adt_dotplot))]
+
+# 确保所有基因都存在
+genes_for_adt_dotplot <- intersect(genes_for_adt_dotplot, all_adt_features)
+genes_for_adt_heatmap <- intersect(genes_for_adt_heatmap, all_adt_features)
+genes_for_adt_featureplot <- intersect(genes_for_adt_featureplot, all_adt_features)
+
+cat("【ADT 可视化标志物选择】\n")
+cat("  DotPlot:", length(genes_for_adt_dotplot), "个 ADT\n")
+cat("  Heatmap:", length(genes_for_adt_heatmap), "个 ADT\n")
+cat("  FeaturePlot:", length(genes_for_adt_featureplot), "个 ADT\n\n")
+
+# ==================== ADT DotPlot ====================
+cat("【1/3】生成 ADT DotPlot...\n")
+
+if (length(genes_for_adt_dotplot) > 0) {
+  p_adt_dot <- DotPlot(seurat_obj_adt_rna_wnn,
+                       features = genes_for_adt_dotplot,
+                       assay = "ADT") +
+    RotatedAxis() +
+    scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
+    labs(title = "ADT Markers - ADT Clusters",
+         subtitle = paste0("Dot size = % expressing | Color = protein level"),
+         x = "ADT Markers", y = "ADT Clusters") +
+    theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
+
+  plot_and_save(p_adt_dot, "multimodal_adt_dotplot",
+                subfolder = "Multimodal_Markers",
+                width = max(12, length(genes_for_adt_dotplot) * 0.4), height = 8)
+}
+
+# ==================== ADT Heatmap ====================
+cat("【2/3】生成 ADT Heatmap...\n")
+
+if (length(genes_for_adt_heatmap) > 0) {
+  # ScaleData for ADT
+  seurat_obj_adt_rna_wnn <- ScaleData(seurat_obj_adt_rna_wnn,
+                                      features = genes_for_adt_heatmap,
+                                      assay = "ADT",
+                                      verbose = FALSE)
+
+  p_adt_heat <- DoHeatmap(seurat_obj_adt_rna_wnn,
+                          features = genes_for_adt_heatmap,
+                          assay = "ADT",
+                          group.by = "ADT_clusters") +
+    scale_fill_gradientn(colors = c("blue", "white", "red")) +
+    labs(title = "ADT Markers Heatmap - ADT Clusters",
+         subtitle = paste0("Top ", length(genes_for_adt_heatmap), " protein markers")) +
+    theme(axis.text.y = element_text(size = 8))
+
+  plot_and_save(p_adt_heat, "multimodal_adt_heatmap",
+                subfolder = "Multimodal_Markers",
+                width = 12, height = max(10, length(genes_for_adt_heatmap) * 0.25))
+}
+
+# ==================== ADT FeaturePlot ====================
+cat("【3/3】生成 ADT FeaturePlot...\n")
+
+if (length(genes_for_adt_featureplot) > 0) {
+  p_adt_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                            features = genes_for_adt_featureplot,
+                            reduction = "adt_umap",
+                            ncol = 3,
+                            pt.size = 0.5) +
+    plot_annotation(title = "ADT Markers on ADT UMAP (ADT-driven)",
+                   subtitle = "Protein level shown as color intensity")
+
+  plot_and_save(p_adt_feat, "multimodal_adt_featureplot",
+                subfolder = "Multimodal_Markers",
+                width = 12, height = ceiling(length(genes_for_adt_featureplot) / 3) * 4)
+}
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ ADT Markers 可视化完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+### 8.6.3 WNN Markers 可视化（基于 WNN_clusters）
+
+```{r wnn_markers_visualization, fig.width=14, fig.height=10}
+################################################################################
+##################### WNN Markers 可视化 ##########################################
+################################################################################
+#
+# 【功能说明】
+# 可视化基于 WNN-driven clustering (WNN_clusters) 的差异基因
+#
+# 【数据来源】
+# - wnn_markers (Section 8.5)：WNN 差异基因分析结果
+# - WNN_clusters：WNN 驱动的聚类结果
+# - "wnn_umap" reduction：WNN 驱动的 UMAP 降维
+#
+# 【特殊说明】
+# WNN markers 分析使用 SCT assay（RNA），但聚类基于多模态整合
+# 因此可以展示"整合后的细胞亚群在转录组层面的特征"
+#
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("🎯 WNN Markers 可视化（WNN_clusters）\n")
+cat(strrep("=", 80), "\n\n")
+
+# 设置分析参数
+Idents(seurat_obj_adt_rna_wnn) <- "WNN_clusters"
+DefaultAssay(seurat_obj_adt_rna_wnn) <- "SCT"
+
+# ==================== 智能基因选择 ====================
+# 提取 top WNN markers
+top5_wnn_markers <- wnn_markers %>%
+  group_by(cluster) %>%
+  slice_max(n = 5, order_by = avg_log2FC)
+
+top_wnn_genes <- unique(top5_wnn_markers$gene)
+
+# 根据 analysis_mode 选择基因
+genes_for_wnn_dotplot <- c()
+genes_for_wnn_heatmap <- c()
+genes_for_wnn_featureplot <- c()
+
+if (analysis_mode == "cDC1") {
+  genes_for_wnn_dotplot <- unique(c(genes_cDC1, genes_maturation,
+                                    intersect(top_wnn_genes, genes_cDC2)))
+  genes_for_wnn_featureplot <- genes_cDC1[1:min(6, length(genes_cDC1))]
+} else if (analysis_mode == "cDC2") {
+  genes_for_wnn_dotplot <- unique(c(genes_cDC2, genes_maturation,
+                                    intersect(top_wnn_genes, genes_cDC1)))
+  genes_for_wnn_featureplot <- genes_cDC2[1:min(6, length(genes_cDC2))]
+} else if (analysis_mode == "integrated") {
+  genes_for_wnn_dotplot <- unique(c(genes_cDC1, genes_cDC2, genes_maturation))
+  genes_for_wnn_featureplot <- unique(c(genes_cDC1[1:3], genes_cDC2[1:3]))
+} else if (analysis_mode == "full") {
+  genes_for_wnn_dotplot <- unique(c(genes_lineage, genes_functional))
+  genes_for_wnn_featureplot <- genes_lineage[1:min(6, length(genes_lineage))]
+}
+
+# 补充 top WNN markers
+if (length(genes_for_wnn_dotplot) < 15) {
+  additional_genes <- setdiff(top_wnn_genes, genes_for_wnn_dotplot)
+  genes_for_wnn_dotplot <- c(genes_for_wnn_dotplot,
+                             additional_genes[1:min(15 - length(genes_for_wnn_dotplot),
+                                                   length(additional_genes))])
+}
+
+# 热图使用前 30 个 top WNN markers
+genes_for_wnn_heatmap <- top_wnn_genes[1:min(30, length(top_wnn_genes))]
+
+# 只保留实际存在的基因
+genes_for_wnn_dotplot <- intersect(genes_for_wnn_dotplot, rownames(seurat_obj_adt_rna_wnn))
+genes_for_wnn_heatmap <- intersect(genes_for_wnn_heatmap, rownames(seurat_obj_adt_rna_wnn))
+genes_for_wnn_featureplot <- intersect(genes_for_wnn_featureplot, rownames(seurat_obj_adt_rna_wnn))
+
+cat("【WNN 可视化基因选择】\n")
+cat("  DotPlot:", length(genes_for_wnn_dotplot), "个基因\n")
+cat("  Heatmap:", length(genes_for_wnn_heatmap), "个基因\n")
+cat("  FeaturePlot:", length(genes_for_wnn_featureplot), "个基因\n\n")
+
+# ==================== WNN DotPlot ====================
+cat("【1/3】生成 WNN DotPlot...\n")
+
+p_wnn_dot <- DotPlot(seurat_obj_adt_rna_wnn,
+                     features = genes_for_wnn_dotplot,
+                     assay = "SCT") +
+  RotatedAxis() +
+  scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdYlBu"))) +
+  labs(title = "WNN Markers - WNN Clusters",
+       subtitle = paste0("Multimodal-driven clusters | Dot size = % expressing"),
+       x = "Marker Genes", y = "WNN Clusters") +
+  theme(axis.text.x = element_text(size = 10, angle = 45, hjust = 1))
+
+plot_and_save(p_wnn_dot, "multimodal_wnn_dotplot",
+              subfolder = "Multimodal_Markers",
+              width = max(12, length(genes_for_wnn_dotplot) * 0.4), height = 8)
+
+# ==================== WNN Heatmap ====================
+cat("【2/3】生成 WNN Heatmap...\n")
+
+# ScaleData for WNN markers
+seurat_obj_adt_rna_wnn <- ScaleData(seurat_obj_adt_rna_wnn,
+                                    features = genes_for_wnn_heatmap,
+                                    verbose = FALSE)
+
+p_wnn_heat <- DoHeatmap(seurat_obj_adt_rna_wnn,
+                        features = genes_for_wnn_heatmap,
+                        assay = "SCT",
+                        group.by = "WNN_clusters") +
+  scale_fill_gradientn(colors = c("blue", "white", "red")) +
+  labs(title = "WNN Markers Heatmap - WNN Clusters",
+       subtitle = paste0("Top ", length(genes_for_wnn_heatmap),
+                        " genes from multimodal-integrated clustering")) +
+  theme(axis.text.y = element_text(size = 8))
+
+plot_and_save(p_wnn_heat, "multimodal_wnn_heatmap",
+              subfolder = "Multimodal_Markers",
+              width = 12, height = max(10, length(genes_for_wnn_heatmap) * 0.25))
+
+# ==================== WNN FeaturePlot ====================
+cat("【3/3】生成 WNN FeaturePlot...\n")
+
+if (length(genes_for_wnn_featureplot) > 0) {
+  p_wnn_feat <- FeaturePlot(seurat_obj_adt_rna_wnn,
+                            features = genes_for_wnn_featureplot,
+                            reduction = "wnn_umap",
+                            ncol = 3,
+                            pt.size = 0.5) +
+    plot_annotation(title = "WNN Markers on WNN UMAP (Multimodal-driven)",
+                   subtitle = "Expression on integrated UMAP")
+
+  plot_and_save(p_wnn_feat, "multimodal_wnn_featureplot",
+                subfolder = "Multimodal_Markers",
+                width = 12, height = ceiling(length(genes_for_wnn_featureplot) / 3) * 4)
+}
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ WNN Markers 可视化完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+> **🔍 如何综合解读三模态可视化？**
+>
+> **步骤1：对比三种聚类策略的 cluster 数量**
+> - RNA-driven (SCT_clusters)：通常 cluster 数最多，分辨率最高
+> - ADT-driven (ADT_clusters)：cluster 数较少，但更稳定（蛋白表达变异小）
+> - WNN-driven (WNN_clusters)：整合两者，平衡分辨率和稳定性
+>
+> **步骤2：识别一致性 markers**
+> - 如果某个基因在 RNA DotPlot 和 WNN DotPlot 中都高表达 → 转录组驱动的稳健 marker
+> - 如果某个蛋白在 ADT DotPlot 中高表达，对应基因在 RNA DotPlot 中也高 → RNA-蛋白一致性好
+> - 如果 ADT 高但 RNA 低 → 转录后调控或蛋白稳定性差异
+>
+> **步骤3：发现多模态整合的优势**
+> - 对比 RNA FeaturePlot 和 WNN FeaturePlot 的空间分布
+> - WNN UMAP 通常更"干净"（cluster 边界更清晰）
+> - WNN 可以发现单模态无法识别的细胞亚群
+>
+> **步骤4：细胞类型注释策略**
+> - **保守策略**：只注释在 RNA、ADT、WNN 中都一致的 cluster
+> - **激进策略**：利用 ADT 的特异性，即使 RNA marker 不明显也注释
+> - **推荐策略**：以 WNN 为主，用 RNA 和 ADT 交叉验证
+>
+> **常见模式识别**：
+> - **成熟 cDC**：ADT 中 CCR7/CD40 高，RNA 中 Ccr7/Relb 高，WNN 中形成独立 cluster
+> - **增殖细胞**：RNA 中 Mki67/Top2a 高，但 ADT 可能无明显特征
+> - **技术性 cluster**：RNA Heatmap 中富集线粒体/核糖体基因，需要删除
 
 ---
 
