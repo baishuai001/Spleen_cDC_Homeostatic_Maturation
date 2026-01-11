@@ -3400,7 +3400,7 @@ if (length(genes_tf_filt) > 0) {
     plot_annotation(title = "Transcription Factors on RNA UMAP")
   plot_and_save(p_rna_tf, "functional_rna_transcription_factors_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_tf_filt) / 3) * 4)
+                width = 15, height = ceiling(length(genes_tf_filt) / 3) * 5.2)
 }
 
 cat("【9/9】RNA 功能基因可视化完成\n\n")
@@ -3522,7 +3522,7 @@ if (length(genes_tf_filt) > 0) {
     plot_annotation(title = "Transcription Factors on ADT UMAP")
   plot_and_save(p_adt_tf, "functional_adt_transcription_factors_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_tf_filt) / 3) * 4)
+                width = 15, height = ceiling(length(genes_tf_filt) / 3) * 5.2)
 }
 
 cat("【9/9】ADT 功能基因可视化完成\n\n")
@@ -3637,7 +3637,7 @@ if (length(genes_tf_filt) > 0) {
     plot_annotation(title = "Transcription Factors on WNN UMAP")
   plot_and_save(p_wnn_tf, "functional_wnn_transcription_factors_featureplot",
                 subfolder = "Functional_Genes",
-                width = 12, height = ceiling(length(genes_tf_filt) / 3) * 4)
+                width = 15, height = ceiling(length(genes_tf_filt) / 3) * 5.2)
 }
 
 cat("【9/9】WNN 功能基因可视化完成\n\n")
