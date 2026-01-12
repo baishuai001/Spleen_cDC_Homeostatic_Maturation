@@ -1429,8 +1429,11 @@ if (analysis_mode == "full") {
     }
   }
 
-  # 添加标注
-  seurat_obj$cell_type_predicted <- cluster_annotation[as.character(Idents(seurat_obj))]
+  # 添加标注（为每个细胞分配对应cluster的标注）
+  cell_clusters <- as.character(Idents(seurat_obj))
+  cell_annotations <- cluster_annotation[cell_clusters]
+  names(cell_annotations) <- names(Idents(seurat_obj))  # 保持细胞名称
+  seurat_obj$cell_type_predicted <- cell_annotations
 
   # 可视化
   p1 <- DimPlot(seurat_obj, group.by = "seurat_clusters", label = TRUE) +
