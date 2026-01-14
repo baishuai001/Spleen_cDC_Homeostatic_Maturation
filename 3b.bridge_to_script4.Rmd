@@ -196,6 +196,10 @@ if ("umap" %in% reductions_available) {
   # 复制降维对象
   seuratObj[["SCT_umap"]] <- seuratObj[["umap"]]
 
+  # 修正 reduction key（必须在修改列名之前）
+  seuratObj[["SCT_umap"]]@key <- "sctUMAP_"
+  cat("    Reduction key 已更新: sctUMAP_\n")
+
   # 修正列名
   old_colnames <- colnames(seuratObj[["SCT_umap"]]@cell.embeddings)
   cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
@@ -216,6 +220,10 @@ if ("tsne" %in% reductions_available) {
 
   # 复制降维对象
   seuratObj[["SCT_tsne"]] <- seuratObj[["tsne"]]
+
+  # 修正 reduction key（必须在修改列名之前）
+  seuratObj[["SCT_tsne"]]@key <- "sctTSNE_"
+  cat("    Reduction key 已更新: sctTSNE_\n")
 
   # 修正列名
   old_colnames <- colnames(seuratObj[["SCT_tsne"]]@cell.embeddings)
@@ -238,6 +246,10 @@ if ("adt_umap" %in% reductions_available) {
   # 复制降维对象
   seuratObj[["ADT_umap"]] <- seuratObj[["adt_umap"]]
 
+  # 修正 reduction key（必须在修改列名之前）
+  seuratObj[["ADT_umap"]]@key <- "adtUMAP_"
+  cat("    Reduction key 已更新: adtUMAP_\n")
+
   # 修正列名
   old_colnames <- colnames(seuratObj[["ADT_umap"]]@cell.embeddings)
   cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
@@ -258,6 +270,10 @@ if ("adt_tsne" %in% reductions_available) {
 
   # 复制降维对象
   seuratObj[["ADT_tsne"]] <- seuratObj[["adt_tsne"]]
+
+  # 修正 reduction key（必须在修改列名之前）
+  seuratObj[["ADT_tsne"]]@key <- "adtTSNE_"
+  cat("    Reduction key 已更新: adtTSNE_\n")
 
   # 修正列名
   old_colnames <- colnames(seuratObj[["ADT_tsne"]]@cell.embeddings)
