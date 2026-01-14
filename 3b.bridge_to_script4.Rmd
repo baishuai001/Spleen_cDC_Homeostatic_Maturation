@@ -1,0 +1,583 @@
+---
+title: "衔接脚本：v3.Rmd → 脚本4"
+subtitle: "将 CITE-seq_Complete_Analysis_v3.Rmd 输出转换为脚本4兼容格式"
+author: "CITE-seq Analysis Pipeline"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: show
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8,
+  dpi = 300
+)
+```
+
+# 脚本功能说明 {.tabset}
+
+## 概述
+
+本脚本的主要功能：
+
+1. **加载对象**: 从 `CITE-seq_Complete_Analysis_v3.Rmd` 生成的 `pre_wnn.rds` 对象
+2. **重命名降维**: 将降维结果重命名以匹配脚本4的命名规范
+3. **调整列名**: 修改降维坐标列名符合脚本4期望
+4. **验证组件**: 检查所有必需的 Assays、降维结果和 metadata
+5. **保存对象**: 输出脚本4可直接使用的格式
+
+## 使用方法
+
+### 交互式运行（RStudio）
+
+1. 在第2节设置 `analysis_mode` 参数
+2. 按顺序运行所有 chunks（Ctrl/Cmd + Shift + K 编译整个文档）
+
+### 命令行运行
+
+```bash
+# 使用默认模式（cDC1）
+Rscript -e "rmarkdown::render('3b.bridge_to_script4.Rmd')"
+
+# 指定分析模式
+Rscript -e "rmarkdown::render('3b.bridge_to_script4.Rmd', params = list(analysis_mode = 'integrated'))"
+```
+
+## 输入输出
+
+### 输入文件
+
+**优先使用**: `Output/Robjects/GSE228544_{mode}_pre_wnn.rds`
+- 包含 ADT 和 RNA 独立分析
+- 不包含 WNN 整合（更"干净"）
+
+**备选**: `Output/Robjects/GSE228544_{mode}_final.rds`
+- 包含 WNN 整合的最终对象
+
+### 输出文件
+
+```
+SAM2and3_{mode}/
+└── results/
+    └── Robjects/
+        └── seuratObj_{mode}_for_script4.rds  ← 脚本4兼容格式
+```
+
+## 兼容性说明
+
+脚本4期望的命名规范：
+
+| 组件类型 | v3.Rmd 命名 | 脚本4 期望 | 列名格式 |
+|---------|------------|-----------|---------|
+| RNA UMAP | `umap` | `SCT_umap` | `sctUMAP_1`, `sctUMAP_2` |
+| RNA tSNE | `tsne` | `SCT_tsne` | `sctTSNE_1`, `sctTSNE_2` |
+| ADT UMAP | `adt_umap` | `ADT_umap` | `adtUMAP_1`, `adtUMAP_2` |
+| ADT tSNE | `adt_tsne` | `ADT_tsne` | `adtTSNE_1`, `adtTSNE_2` |
+
+---
+
+# 参数设置
+
+```{r parameters}
+################################################################################
+########################## 🎯 参数配置 ##########################################
+################################################################################
+
+# ==================== 分析模式选择 ====================
+# 可选: "cDC1", "cDC2", "integrated", "full"
+analysis_mode <- "integrated"  # 👈 在这里修改
+
+# 验证模式
+valid_modes <- c("cDC1", "cDC2", "integrated", "full")
+if (!analysis_mode %in% valid_modes) {
+  stop("❌ 无效的分析模式: ", analysis_mode,
+       "\n   可选: ", paste(valid_modes, collapse = ", "))
+}
+
+# ==================== 路径配置 ====================
+output_dir <- "Output/"
+project_name <- paste0("GSE228544_", analysis_mode)
+
+# ==================== 打印配置 ====================
+cat("\n", strrep("=", 80), "\n")
+cat("  衔接脚本：v3.Rmd → 脚本4\n")
+cat("  分析模式:", analysis_mode, "\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# 加载 R 包
+
+```{r load_packages}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(knitr)
+  library(kableExtra)
+})
+
+cat("✓ R 包加载完成\n\n")
+```
+
+---
+
+# 加载 Seurat 对象
+
+```{r load_object}
+################################################################################
+########################## 📂 加载对象 ##########################################
+################################################################################
+
+# 优先使用 pre_wnn.rds（更"干净"，只包含 ADT 和 RNA）
+input_file <- paste0(output_dir, "Robjects/", project_name, "_pre_wnn.rds")
+
+if (!file.exists(input_file)) {
+  cat("⚠️  Pre-WNN 对象不存在，尝试使用最终对象...\n")
+  input_file <- paste0(output_dir, "Robjects/", project_name, "_final.rds")
+}
+
+if (!file.exists(input_file)) {
+  stop("❌ 找不到输入文件: ", input_file,
+       "\n   请先运行 CITE-seq_Complete_Analysis_v3.Rmd")
+}
+
+cat("📂 加载对象:", input_file, "\n")
+seuratObj <- readRDS(input_file)
+
+cat("✓ 对象加载完成\n")
+cat("  细胞数:", ncol(seuratObj), "\n")
+cat("  基因数:", nrow(seuratObj), "\n")
+cat("  ADT 数:", nrow(seuratObj[["ADT"]]), "\n\n")
+```
+
+---
+
+# 检查现有降维结果
+
+```{r check_reductions}
+################################################################################
+########################## 📊 检查现有降维 ######################################
+################################################################################
+
+reductions_available <- names(seuratObj@reductions)
+
+cat("📊 现有降维结果:\n")
+for (red in reductions_available) {
+  n_dims <- ncol(seuratObj[[red]]@cell.embeddings)
+  colnames_current <- colnames(seuratObj[[red]]@cell.embeddings)
+  cat("  -", red, "(", n_dims, "维 ):", paste(colnames_current, collapse = ", "), "\n")
+}
+cat("\n")
+```
+
+---
+
+# 重命名降维结果
+
+## RNA UMAP: `umap` → `SCT_umap`
+
+```{r rename_rna_umap}
+if ("umap" %in% reductions_available) {
+  cat("  [1/4] RNA UMAP: umap → SCT_umap\n")
+
+  # 复制降维对象
+  seuratObj[["SCT_umap"]] <- seuratObj[["umap"]]
+
+  # 修正列名
+  old_colnames <- colnames(seuratObj[["SCT_umap"]]@cell.embeddings)
+  cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
+
+  colnames(seuratObj[["SCT_umap"]]@cell.embeddings) <- c("sctUMAP_1", "sctUMAP_2")
+  cat("    新列名: sctUMAP_1, sctUMAP_2\n")
+  cat("    ✓ 完成\n\n")
+} else {
+  cat("  [1/4] ⚠️  未找到 RNA UMAP (umap)\n\n")
+}
+```
+
+## RNA tSNE: `tsne` → `SCT_tsne`
+
+```{r rename_rna_tsne}
+if ("tsne" %in% reductions_available) {
+  cat("  [2/4] RNA tSNE: tsne → SCT_tsne\n")
+
+  # 复制降维对象
+  seuratObj[["SCT_tsne"]] <- seuratObj[["tsne"]]
+
+  # 修正列名
+  old_colnames <- colnames(seuratObj[["SCT_tsne"]]@cell.embeddings)
+  cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
+
+  colnames(seuratObj[["SCT_tsne"]]@cell.embeddings) <- c("sctTSNE_1", "sctTSNE_2")
+  cat("    新列名: sctTSNE_1, sctTSNE_2\n")
+  cat("    ✓ 完成\n\n")
+} else {
+  cat("  [2/4] ⚠️  未找到 RNA tSNE (tsne)\n\n")
+}
+```
+
+## ADT UMAP: `adt_umap` → `ADT_umap`
+
+```{r rename_adt_umap}
+if ("adt_umap" %in% reductions_available) {
+  cat("  [3/4] ADT UMAP: adt_umap → ADT_umap\n")
+
+  # 复制降维对象
+  seuratObj[["ADT_umap"]] <- seuratObj[["adt_umap"]]
+
+  # 修正列名
+  old_colnames <- colnames(seuratObj[["ADT_umap"]]@cell.embeddings)
+  cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
+
+  colnames(seuratObj[["ADT_umap"]]@cell.embeddings) <- c("adtUMAP_1", "adtUMAP_2")
+  cat("    新列名: adtUMAP_1, adtUMAP_2\n")
+  cat("    ✓ 完成\n\n")
+} else {
+  cat("  [3/4] ⚠️  未找到 ADT UMAP (adt_umap)\n\n")
+}
+```
+
+## ADT tSNE: `adt_tsne` → `ADT_tsne`
+
+```{r rename_adt_tsne}
+if ("adt_tsne" %in% reductions_available) {
+  cat("  [4/4] ADT tSNE: adt_tsne → ADT_tsne\n")
+
+  # 复制降维对象
+  seuratObj[["ADT_tsne"]] <- seuratObj[["adt_tsne"]]
+
+  # 修正列名
+  old_colnames <- colnames(seuratObj[["ADT_tsne"]]@cell.embeddings)
+  cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
+
+  colnames(seuratObj[["ADT_tsne"]]@cell.embeddings) <- c("adtTSNE_1", "adtTSNE_2")
+  cat("    新列名: adtTSNE_1, adtTSNE_2\n")
+  cat("    ✓ 完成\n\n")
+} else {
+  cat("  [4/4] ⚠️  未找到 ADT tSNE (adt_tsne)\n\n")
+}
+```
+
+---
+
+# 验证所有必需组件
+
+```{r validation}
+################################################################################
+########################## ✅ 验证脚本4所需组件 ##################################
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("✅ 验证脚本4所需组件\n")
+cat(strrep("=", 80), "\n\n")
+
+# ==================== 1. 检查降维结果 ====================
+cat("【降维结果】\n")
+required_reductions <- c("SCT_umap", "SCT_tsne", "ADT_umap", "ADT_tsne")
+all_reductions_ok <- TRUE
+
+reduction_status <- data.frame(
+  Reduction = character(),
+  Status = character(),
+  Columns = character(),
+  stringsAsFactors = FALSE
+)
+
+for (red in required_reductions) {
+  if (red %in% names(seuratObj@reductions)) {
+    colnames_current <- colnames(seuratObj[[red]]@cell.embeddings)
+    cat("  ✓", red, ":", paste(colnames_current, collapse = ", "), "\n")
+    reduction_status <- rbind(reduction_status, data.frame(
+      Reduction = red,
+      Status = "✓",
+      Columns = paste(colnames_current, collapse = ", ")
+    ))
+  } else {
+    cat("  ✗", red, "(缺失)\n")
+    all_reductions_ok <- FALSE
+    reduction_status <- rbind(reduction_status, data.frame(
+      Reduction = red,
+      Status = "✗",
+      Columns = "缺失"
+    ))
+  }
+}
+
+# ==================== 2. 检查 Metadata ====================
+cat("\n【Meta.data 列】\n")
+required_metadata <- c("SCT_clusters", "ADT_clusters", "nCount_RNA", "subsets_Mito_percent")
+all_metadata_ok <- TRUE
+
+metadata_status <- data.frame(
+  Column = character(),
+  Status = character(),
+  Info = character(),
+  stringsAsFactors = FALSE
+)
+
+for (meta in required_metadata) {
+  if (meta %in% colnames(seuratObj@meta.data)) {
+    if (grepl("clusters", meta)) {
+      n_clusters <- length(unique(seuratObj@meta.data[[meta]]))
+      info <- paste0(n_clusters, " clusters")
+      cat("  ✓", meta, "(", info, ")\n")
+    } else if (grepl("percent|nCount", meta)) {
+      range_val <- range(seuratObj@meta.data[[meta]], na.rm = TRUE)
+      info <- paste0("范围: ", round(range_val[1], 2), " - ", round(range_val[2], 2))
+      cat("  ✓", meta, "(", info, ")\n")
+    } else {
+      info <- "存在"
+      cat("  ✓", meta, "\n")
+    }
+    metadata_status <- rbind(metadata_status, data.frame(
+      Column = meta,
+      Status = "✓",
+      Info = info
+    ))
+  } else {
+    cat("  ✗", meta, "(缺失)\n")
+    all_metadata_ok <- FALSE
+    metadata_status <- rbind(metadata_status, data.frame(
+      Column = meta,
+      Status = "✗",
+      Info = "缺失"
+    ))
+  }
+}
+
+# ==================== 3. 检查 Assays ====================
+cat("\n【Assays】\n")
+required_assays <- c("RNA", "SCT", "ADT")
+all_assays_ok <- TRUE
+
+assay_status <- data.frame(
+  Assay = character(),
+  Status = character(),
+  Features = character(),
+  stringsAsFactors = FALSE
+)
+
+for (assay in required_assays) {
+  if (assay %in% names(seuratObj@assays)) {
+    n_features <- nrow(seuratObj[[assay]])
+    cat("  ✓", assay, "(", n_features, "features )\n")
+    assay_status <- rbind(assay_status, data.frame(
+      Assay = assay,
+      Status = "✓",
+      Features = as.character(n_features)
+    ))
+  } else {
+    cat("  ✗", assay, "(缺失)\n")
+    all_assays_ok <- FALSE
+    assay_status <- rbind(assay_status, data.frame(
+      Assay = assay,
+      Status = "✗",
+      Features = "缺失"
+    ))
+  }
+}
+
+cat("\n")
+```
+
+## 验证结果表格
+
+### 降维结果
+
+```{r validation_table_reductions, results='asis'}
+kable(reduction_status,
+      caption = "降维结果验证",
+      align = c("l", "c", "l")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE)
+```
+
+### Metadata
+
+```{r validation_table_metadata, results='asis'}
+kable(metadata_status,
+      caption = "Metadata 验证",
+      align = c("l", "c", "l")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE)
+```
+
+### Assays
+
+```{r validation_table_assays, results='asis'}
+kable(assay_status,
+      caption = "Assays 验证",
+      align = c("l", "c", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE)
+```
+
+---
+
+# 创建输出目录结构
+
+```{r create_dirs}
+################################################################################
+########################## 📁 创建目录结构 ######################################
+################################################################################
+
+cat("📁 创建脚本4兼容的目录结构...\n")
+
+output_folder <- paste0("SAM2and3_", analysis_mode, "/")
+dir.create(output_folder, showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(output_folder, "results/"), showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(output_folder, "results/Robjects/"), showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(output_folder, "results/QC/"), showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(output_folder, "results/Annotation/"), showWarnings = FALSE, recursive = TRUE)
+dir.create(paste0(output_folder, "results/Marker_lists/"), showWarnings = FALSE, recursive = TRUE)
+
+cat("  ✓ 目录结构已创建:", output_folder, "\n\n")
+
+# 列出创建的目录
+created_dirs <- list.dirs(output_folder, recursive = TRUE)
+cat("创建的目录:\n")
+for (dir in created_dirs) {
+  cat("  -", dir, "\n")
+}
+cat("\n")
+```
+
+---
+
+# 保存兼容对象
+
+```{r save_object}
+################################################################################
+########################## 💾 保存对象 ##########################################
+################################################################################
+
+cat("💾 保存脚本4兼容对象...\n")
+
+output_file <- paste0(output_folder, "results/Robjects/seuratObj_", analysis_mode, "_for_script4.rds")
+saveRDS(seuratObj, output_file)
+
+file_size_mb <- round(file.size(output_file) / 1024 / 1024, 2)
+cat("  ✓ 对象已保存:", output_file, "\n")
+cat("  文件大小:", file_size_mb, "MB\n\n")
+```
+
+---
+
+# 生成摘要报告
+
+```{r summary_report}
+################################################################################
+########################## 📊 衔接完成摘要 ######################################
+################################################################################
+
+cat("\n", strrep("=", 80), "\n")
+cat("📊 衔接完成摘要\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("【输入】\n")
+cat("  文件:", basename(input_file), "\n\n")
+
+cat("【输出】\n")
+cat("  目录:", output_folder, "\n")
+cat("  文件:", basename(output_file), "\n\n")
+
+cat("【数据概览】\n")
+cat("  分析模式:", analysis_mode, "\n")
+cat("  细胞数:", ncol(seuratObj), "\n")
+cat("  RNA 特征:", nrow(seuratObj[["RNA"]]), "\n")
+cat("  ADT 特征:", nrow(seuratObj[["ADT"]]), "\n")
+cat("  SCT clusters:", length(unique(seuratObj$SCT_clusters)), "\n")
+cat("  ADT clusters:", length(unique(seuratObj$ADT_clusters)), "\n\n")
+
+cat("【降维结果】\n")
+cat("  ✓ SCT_umap ( sctUMAP_1, sctUMAP_2 )\n")
+cat("  ✓ SCT_tsne ( sctTSNE_1, sctTSNE_2 )\n")
+cat("  ✓ ADT_umap ( adtUMAP_1, adtUMAP_2 )\n")
+cat("  ✓ ADT_tsne ( adtTSNE_1, adtTSNE_2 )\n\n")
+```
+
+## 最终状态检查
+
+```{r final_status}
+# 最终状态检查
+if (all_reductions_ok && all_metadata_ok && all_assays_ok) {
+  cat(strrep("=", 80), "\n")
+  cat("  ✅ 衔接成功！\n")
+  cat("  现在可以运行脚本4了\n")
+  cat(strrep("=", 80), "\n\n")
+
+  final_status <- "成功"
+  status_color <- "success"
+} else {
+  cat(strrep("=", 80), "\n")
+  cat("  ⚠️  衔接完成，但存在缺失组件\n")
+  cat("  请检查上述验证结果\n")
+  cat(strrep("=", 80), "\n\n")
+
+  final_status <- "部分成功"
+  status_color <- "warning"
+}
+```
+
+<div class="alert alert-`r status_color`">
+**衔接状态**: `r final_status`
+
+**细胞数**: `r ncol(seuratObj)`
+**输出文件**: `r output_file`
+**文件大小**: `r file_size_mb` MB
+</div>
+
+---
+
+# 下一步操作
+
+```{r next_steps, results='asis'}
+cat("## 修改脚本4的开头\n\n")
+cat("在 `4.script_CITEseq_SAM_WT_aggr.R` 的开头添加：\n\n")
+cat("```r\n")
+cat("# 设置分析模式\n")
+cat("analysis_mode <- \"", analysis_mode, "\"\n", sep = "")
+cat("sampleName <- \"SAM2and3_", analysis_mode, "\"\n", sep = "")
+cat("sampleFolder <- paste0(sampleName, \"/\")\n\n")
+cat("# 加载衔接脚本生成的对象\n")
+cat("seuratObj <- readRDS(\"", output_folder, "results/Robjects/seuratObj_",
+    analysis_mode, "_for_script4.rds\")\n", sep = "")
+cat("```\n\n")
+
+cat("## 运行脚本4\n\n")
+cat("```bash\n")
+cat("Rscript 4.script_CITEseq_SAM_WT_aggr.R\n")
+cat("```\n\n")
+
+cat("## 或者使用 RStudio\n\n")
+cat("直接在 RStudio 中打开 `4.script_CITEseq_SAM_WT_aggr.R` 并运行\n\n")
+```
+
+---
+
+# Session Info
+
+```{r session_info}
+sessionInfo()
+```
+
+---
+
+<div class="alert alert-info">
+**脚本版本**: 1.0
+**最后更新**: `r Sys.Date()`
+**作者**: CITE-seq Analysis Pipeline
+</div>
