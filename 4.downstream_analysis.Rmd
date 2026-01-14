@@ -950,17 +950,30 @@ cat("📤 准备细胞类型标注所需数据...\n")
 saveRDS(seurat_obj, file.path(output_dir, "Robjects", "seurat_obj_for_annotation.rds"))
 cat("  ✓ Seurat对象已保存: seurat_obj_for_annotation.rds\n")
 
-# 导出cluster统计
-cluster_stats <- data.frame(
-  RNA_Cluster = names(table(seurat_obj$SCT_clusters)),
-  RNA_Cell_Count = as.vector(table(seurat_obj$SCT_clusters)),
-  ADT_Cluster = names(table(seurat_obj$ADT_clusters)),
-  ADT_Cell_Count = as.vector(table(seurat_obj$ADT_clusters))
+# 导出cluster统计（分别创建两个表）
+rna_cluster_stats <- data.frame(
+  Cluster = names(table(seurat_obj$SCT_clusters)),
+  Cell_Count = as.vector(table(seurat_obj$SCT_clusters))
+)
+rownames(rna_cluster_stats) <- NULL
+
+adt_cluster_stats <- data.frame(
+  Cluster = names(table(seurat_obj$ADT_clusters)),
+  Cell_Count = as.vector(table(seurat_obj$ADT_clusters))
+)
+rownames(adt_cluster_stats) <- NULL
+
+# 保存到Excel（两个sheet）
+cluster_stats_list <- list(
+  RNA_Clusters = rna_cluster_stats,
+  ADT_Clusters = adt_cluster_stats
 )
 
-write.xlsx(cluster_stats,
+write.xlsx(cluster_stats_list,
            file.path(output_dir, "Tables", "cluster_statistics.xlsx"))
 cat("  ✓ Cluster统计已保存: cluster_statistics.xlsx\n")
+cat("    - RNA clusters:", nrow(rna_cluster_stats), "个\n")
+cat("    - ADT clusters:", nrow(adt_cluster_stats), "个\n")
 
 cat("\n📝 下一步：手动细胞类型标注\n")
 cat("   1. 查看 Tables/ 中的marker列表\n")
