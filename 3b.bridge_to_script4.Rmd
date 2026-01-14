@@ -59,11 +59,11 @@ Rscript -e "rmarkdown::render('3b.bridge_to_script4.Rmd', params = list(analysis
 
 ### 输入文件
 
-**优先使用**: `Output/Robjects/GSE228544_{mode}_pre_wnn.rds`
+**优先使用**: `results/Robjects/GSE228544_{mode}_pre_wnn.rds`
 - 包含 ADT 和 RNA 独立分析
 - 不包含 WNN 整合（更"干净"）
 
-**备选**: `Output/Robjects/GSE228544_{mode}_final.rds`
+**备选**: `results/Robjects/GSE228544_{mode}_final.rds`
 - 包含 WNN 整合的最终对象
 
 ### 输出文件
@@ -107,7 +107,7 @@ if (!analysis_mode %in% valid_modes) {
 }
 
 # ==================== 路径配置 ====================
-output_dir <- "Output/"
+output_dir <- "results/"
 project_name <- paste0("GSE228544_", analysis_mode)
 
 # ==================== 打印配置 ====================

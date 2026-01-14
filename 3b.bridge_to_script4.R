@@ -41,7 +41,7 @@ cat("  分析模式:", analysis_mode, "\n")
 cat("========================================\n\n")
 
 # ==================== 1. 加载对象 ====================
-output_dir <- "Output/"
+output_dir <- "results/"
 project_name <- paste0("GSE228544_", analysis_mode)
 
 # 优先使用 pre_wnn.rds（更"干净"，只包含 ADT 和 RNA）
