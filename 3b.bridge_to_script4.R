@@ -80,16 +80,16 @@ if ("umap" %in% reductions_available) {
   # 复制降维对象
   seuratObj[["SCT_umap"]] <- seuratObj[["umap"]]
 
-  # 修正 reduction key（必须在修改列名之前）
-  seuratObj[["SCT_umap"]]@key <- "sctUMAP_"
-  cat("    Reduction key 已更新: sctUMAP_\n")
-
-  # 修正列名
+  # 获取当前列名
   old_colnames <- colnames(seuratObj[["SCT_umap"]]@cell.embeddings)
   cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
 
+  # 同时修改列名和 key（使用 slot 避免验证冲突）
   colnames(seuratObj[["SCT_umap"]]@cell.embeddings) <- c("sctUMAP_1", "sctUMAP_2")
+  slot(seuratObj[["SCT_umap"]], "key") <- "sctUMAP_"
+
   cat("    新列名: sctUMAP_1, sctUMAP_2\n")
+  cat("    Reduction key: sctUMAP_\n")
   cat("    ✓ 完成\n\n")
 } else {
   cat("  [1/4] ⚠️  未找到 RNA UMAP (umap)\n\n")
@@ -102,16 +102,16 @@ if ("tsne" %in% reductions_available) {
   # 复制降维对象
   seuratObj[["SCT_tsne"]] <- seuratObj[["tsne"]]
 
-  # 修正 reduction key（必须在修改列名之前）
-  seuratObj[["SCT_tsne"]]@key <- "sctTSNE_"
-  cat("    Reduction key 已更新: sctTSNE_\n")
-
-  # 修正列名
+  # 获取当前列名
   old_colnames <- colnames(seuratObj[["SCT_tsne"]]@cell.embeddings)
   cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
 
+  # 同时修改列名和 key（使用 slot 避免验证冲突）
   colnames(seuratObj[["SCT_tsne"]]@cell.embeddings) <- c("sctTSNE_1", "sctTSNE_2")
+  slot(seuratObj[["SCT_tsne"]], "key") <- "sctTSNE_"
+
   cat("    新列名: sctTSNE_1, sctTSNE_2\n")
+  cat("    Reduction key: sctTSNE_\n")
   cat("    ✓ 完成\n\n")
 } else {
   cat("  [2/4] ⚠️  未找到 RNA tSNE (tsne)\n\n")
@@ -124,16 +124,16 @@ if ("adt_umap" %in% reductions_available) {
   # 复制降维对象
   seuratObj[["ADT_umap"]] <- seuratObj[["adt_umap"]]
 
-  # 修正 reduction key（必须在修改列名之前）
-  seuratObj[["ADT_umap"]]@key <- "adtUMAP_"
-  cat("    Reduction key 已更新: adtUMAP_\n")
-
-  # 修正列名
+  # 获取当前列名
   old_colnames <- colnames(seuratObj[["ADT_umap"]]@cell.embeddings)
   cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
 
+  # 同时修改列名和 key（使用 slot 避免验证冲突）
   colnames(seuratObj[["ADT_umap"]]@cell.embeddings) <- c("adtUMAP_1", "adtUMAP_2")
+  slot(seuratObj[["ADT_umap"]], "key") <- "adtUMAP_"
+
   cat("    新列名: adtUMAP_1, adtUMAP_2\n")
+  cat("    Reduction key: adtUMAP_\n")
   cat("    ✓ 完成\n\n")
 } else {
   cat("  [3/4] ⚠️  未找到 ADT UMAP (adt_umap)\n\n")
@@ -146,16 +146,16 @@ if ("adt_tsne" %in% reductions_available) {
   # 复制降维对象
   seuratObj[["ADT_tsne"]] <- seuratObj[["adt_tsne"]]
 
-  # 修正 reduction key（必须在修改列名之前）
-  seuratObj[["ADT_tsne"]]@key <- "adtTSNE_"
-  cat("    Reduction key 已更新: adtTSNE_\n")
-
-  # 修正列名
+  # 获取当前列名
   old_colnames <- colnames(seuratObj[["ADT_tsne"]]@cell.embeddings)
   cat("    当前列名:", paste(old_colnames, collapse = ", "), "\n")
 
+  # 同时修改列名和 key（使用 slot 避免验证冲突）
   colnames(seuratObj[["ADT_tsne"]]@cell.embeddings) <- c("adtTSNE_1", "adtTSNE_2")
+  slot(seuratObj[["ADT_tsne"]], "key") <- "adtTSNE_"
+
   cat("    新列名: adtTSNE_1, adtTSNE_2\n")
+  cat("    Reduction key: adtTSNE_\n")
   cat("    ✓ 完成\n\n")
 } else {
   cat("  [4/4] ⚠️  未找到 ADT tSNE (adt_tsne)\n\n")
