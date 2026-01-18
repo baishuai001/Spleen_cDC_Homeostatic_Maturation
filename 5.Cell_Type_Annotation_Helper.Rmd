@@ -1,0 +1,630 @@
+---
+title: "细胞类型标注辅助工具"
+subtitle: "基于 GSE228544 原文献标准的自动化标注建议"
+author: "baishuai"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    code_folding: hide
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 14,
+  fig.height = 8,
+  dpi = 300
+)
+```
+
+# 使用说明 {.tabset}
+
+## 前置条件
+
+在运行本脚本之前，请确保：
+
+1. **已运行完** `4.downstream_analysis.Rmd`
+2. **生成了** `downstream_results/{mode}/` 目录
+3. **存在** 以下文件：
+   - `Tables/RNA_markers_for_RNA_clusters.xlsx`
+   - `Robjects/seurat_obj_for_annotation.rds`
+
+## 输出内容
+
+本脚本将生成：
+
+| 输出 | 说明 |
+|------|------|
+| 标注建议表 | 每个cluster的细胞类型建议 |
+| 验证图 | DotPlot验证关键markers |
+| 可复制代码 | 直接可用的标注向量 |
+
+## 文献参考
+
+基于 **GSE228544** 原文献标注标准：
+
+- **cDC1**: 6个发育阶段 (pre → proliferating → early/late immature → early/late mature)
+- **cDC2**: 6个发育阶段 (同上)
+
+---
+
+# 配置参数
+
+```{r config}
+################################################################################
+########################## 🎯 核心参数配置 ######################################
+################################################################################
+
+# ==================== 选择分析模式 ====================
+# 可选: "cDC1", "cDC2", "integrated"
+analysis_mode <- "cDC1"  # 👈 在这里修改
+
+# ==================== 路径配置 ====================
+output_dir <- paste0("downstream_results/", analysis_mode)
+
+cat("═══════════════════════════════════════════════════════════════\n")
+cat("🎯 分析模式:", analysis_mode, "\n")
+cat("📁 数据目录:", output_dir, "\n")
+cat("═══════════════════════════════════════════════════════════════\n")
+```
+
+# 加载依赖
+
+```{r load_packages}
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(dplyr)
+  library(openxlsx)
+  library(ggplot2)
+  library(knitr)
+  library(kableExtra)
+  library(RColorBrewer)
+  library(patchwork)
+})
+
+cat("✅ R包加载完成\n")
+```
+
+# 文献标准定义
+
+## 谱系特异性Markers
+
+根据原文献，cDC1和cDC2通过以下markers区分：
+
+```{r lineage_markers}
+# cDC1 vs cDC2 谱系特异性标志
+lineage_markers <- list(
+  cDC1 = c("Xcr1", "Clec9a", "Itgae", "Irf8", "Batf3", "Id2", "Cadm1", "Tlr3"),
+  cDC2 = c("Sirpa", "Cd24a", "Notch2", "Irf4", "Klf4", "Esam", "Cd209a", "Clec4a4")
+)
+
+# 显示为表格
+lineage_df <- data.frame(
+  cDC1_Markers = c(lineage_markers$cDC1, rep("", 8 - length(lineage_markers$cDC1))),
+  cDC2_Markers = c(lineage_markers$cDC2, rep("", 8 - length(lineage_markers$cDC2)))
+)
+
+kable(lineage_df, caption = "谱系特异性Markers") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## 发育阶段Markers
+
+```{r stage_markers}
+# 发育阶段标志（基于原文献脚本5）
+stage_markers <- list(
+  # pre-cDC阶段 (原文献: S100a+Ccr2+CD300LG+)
+  precursor = c("S100a10", "Ccr2", "Vim", "Fcer1g", "Anxa2"),
+
+  # 增殖阶段
+  proliferating = c("Mki67", "Top2a", "Pcna", "Birc5", "Stmn1", "Cdca8"),
+
+  # Early Immature (原文献: ER应激相关)
+  early_immature = c("Hspa5", "Pdia6", "Creld2", "Manf", "Cd8a"),
+
+  # Late Immature (原文献: 脂质代谢/LXR通路)
+  late_immature = c("Apoe", "Apol7c", "Nr4a2", "Nr4a3", "Egr3", "Cadm1"),
+
+  # Early Mature (原文献: IFN诱导)
+  early_mature = c("Cxcl9", "Cxcl10", "Isg15", "Nfkbia", "Cd40"),
+
+  # Late Mature (原文献: 迁移型)
+  late_mature = c("Ccr7", "Fscn1", "Il12b", "Ccl5", "Cd63", "Relb")
+)
+
+# 显示为表格
+stage_df <- data.frame(
+  Stage = names(stage_markers),
+  Key_Markers = sapply(stage_markers, function(x) paste(head(x, 4), collapse = ", "))
+)
+
+kable(stage_df, caption = "发育阶段关键Markers（基于原文献）") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+# 加载数据
+
+```{r load_data}
+cat("════════════════════════════════════════════════════════════\n")
+cat("【第1步】加载数据\n")
+cat("════════════════════════════════════════════════════════════\n\n")
+
+# 加载Seurat对象
+seurat_file <- file.path(output_dir, "Robjects", "seurat_obj_for_annotation.rds")
+
+if (!file.exists(seurat_file)) {
+  stop("❌ 找不到Seurat对象文件: ", seurat_file,
+       "\n   请确认已运行 4.downstream_analysis.Rmd")
+}
+
+seurat_obj <- readRDS(seurat_file)
+cat("✅ Seurat对象加载成功\n")
+cat("   细胞数:", ncol(seurat_obj), "\n")
+cat("   基因数:", nrow(seurat_obj), "\n\n")
+
+# 加载marker文件
+markers_file <- file.path(output_dir, "Tables", "RNA_markers_for_RNA_clusters.xlsx")
+
+if (!file.exists(markers_file)) {
+  stop("❌ 找不到marker文件: ", markers_file)
+}
+
+# 读取所有sheet
+sheet_names <- getSheetNames(markers_file)
+all_markers <- lapply(sheet_names, function(sheet) {
+  read.xlsx(markers_file, sheet = sheet)
+})
+names(all_markers) <- sheet_names
+
+cat("✅ Marker文件加载成功\n")
+cat("   Clusters数量:", length(sheet_names), "\n")
+cat("   Cluster IDs:", paste(sheet_names, collapse = ", "), "\n")
+```
+
+## 数据概览
+
+```{r data_overview, fig.width=12, fig.height=6}
+# UMAP展示当前聚类
+p_clusters <- DimPlot(seurat_obj,
+                      group.by = "SCT_clusters",
+                      reduction = "umap",
+                      label = TRUE,
+                      label.size = 5,
+                      repel = TRUE) +
+  labs(title = paste0("当前聚类结果 (", analysis_mode, ")"),
+       subtitle = paste0("共 ", length(unique(seurat_obj$SCT_clusters)), " 个clusters")) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+print(p_clusters)
+```
+
+---
+
+# 自动分析
+
+## 分析函数定义
+
+```{r analysis_function}
+# 分析函数：判断每个cluster的谱系和发育阶段
+analyze_cluster <- function(cluster_markers, cluster_id, seurat_obj) {
+
+  result <- list(
+    cluster = cluster_id,
+    cell_count = sum(seurat_obj$SCT_clusters == cluster_id),
+    lineage = NA,
+    lineage_score = 0,
+    lineage_evidence = "",
+    stage = NA,
+    stage_evidence = "",
+    suggested_annotation = NA,
+    confidence = "Low",
+    top_markers = ""
+  )
+
+  if (is.null(cluster_markers) || nrow(cluster_markers) == 0) {
+    return(result)
+  }
+
+  # 获取top markers
+  top_genes <- head(cluster_markers$gene, 30)
+  result$top_markers <- paste(head(cluster_markers$gene, 5), collapse = ", ")
+
+  # ==================== 判断谱系 ====================
+  cDC1_found <- intersect(top_genes, lineage_markers$cDC1)
+  cDC2_found <- intersect(top_genes, lineage_markers$cDC2)
+
+  cDC1_score <- length(cDC1_found)
+  cDC2_score <- length(cDC2_found)
+
+  if (cDC1_score > cDC2_score && cDC1_score >= 2) {
+    result$lineage <- "cDC1"
+    result$lineage_score <- cDC1_score
+    result$lineage_evidence <- paste(cDC1_found, collapse = ", ")
+  } else if (cDC2_score > cDC1_score && cDC2_score >= 2) {
+    result$lineage <- "cDC2"
+    result$lineage_score <- cDC2_score
+    result$lineage_evidence <- paste(cDC2_found, collapse = ", ")
+  } else if (cDC1_score >= 1 && cDC2_score == 0) {
+    result$lineage <- "cDC1 (可能)"
+    result$lineage_score <- cDC1_score
+    result$lineage_evidence <- paste(cDC1_found, collapse = ", ")
+  } else if (cDC2_score >= 1 && cDC1_score == 0) {
+    result$lineage <- "cDC2 (可能)"
+    result$lineage_score <- cDC2_score
+    result$lineage_evidence <- paste(cDC2_found, collapse = ", ")
+  } else {
+    result$lineage <- "不确定"
+    result$lineage_score <- 0
+  }
+
+  # ==================== 判断发育阶段 ====================
+  precursor_found <- intersect(top_genes, stage_markers$precursor)
+  prolif_found <- intersect(top_genes, stage_markers$proliferating)
+  early_imm_found <- intersect(top_genes, stage_markers$early_immature)
+  late_imm_found <- intersect(top_genes, stage_markers$late_immature)
+  early_mat_found <- intersect(top_genes, stage_markers$early_mature)
+  late_mat_found <- intersect(top_genes, stage_markers$late_mature)
+
+  # 计算各阶段得分
+  scores <- c(
+    precursor = length(precursor_found),
+    proliferating = length(prolif_found),
+    early_immature = length(early_imm_found),
+    late_immature = length(late_imm_found),
+    early_mature = length(early_mat_found),
+    late_mature = length(late_mat_found)
+  )
+
+  # 选择得分最高的阶段
+  max_stage <- names(which.max(scores))
+  max_score <- max(scores)
+
+  if (max_score >= 2) {
+    stage_map <- c(
+      precursor = "Pre-cDC",
+      proliferating = "Proliferating",
+      early_immature = "Early Immature",
+      late_immature = "Late Immature",
+      early_mature = "Early Mature",
+      late_mature = "Late Mature"
+    )
+    result$stage <- stage_map[max_stage]
+
+    # 获取证据
+    evidence_list <- list(
+      precursor = precursor_found,
+      proliferating = prolif_found,
+      early_immature = early_imm_found,
+      late_immature = late_imm_found,
+      early_mature = early_mat_found,
+      late_mature = late_mat_found
+    )
+    result$stage_evidence <- paste(evidence_list[[max_stage]], collapse = ", ")
+  } else {
+    result$stage <- "Immature (需验证)"
+    result$stage_evidence <- "无明显阶段markers"
+  }
+
+  # ==================== 生成标注建议 ====================
+  if (!is.na(result$lineage) && result$lineage != "不确定") {
+    base_lineage <- gsub(" \\(可能\\)", "", result$lineage)
+    result$suggested_annotation <- paste(result$stage, base_lineage)
+  } else {
+    result$suggested_annotation <- paste("Unknown -", result$stage)
+  }
+
+  # ==================== 判断置信度 ====================
+  total_evidence <- result$lineage_score + max_score
+  if (total_evidence >= 5) {
+    result$confidence <- "High"
+  } else if (total_evidence >= 3) {
+    result$confidence <- "Medium"
+  } else {
+    result$confidence <- "Low"
+  }
+
+  return(result)
+}
+```
+
+## 执行分析
+
+```{r run_analysis}
+cat("════════════════════════════════════════════════════════════\n")
+cat("【第2步】分析每个Cluster的特征\n")
+cat("════════════════════════════════════════════════════════════\n\n")
+
+# 分析所有cluster
+results <- lapply(names(all_markers), function(cluster_id) {
+  analyze_cluster(all_markers[[cluster_id]], cluster_id, seurat_obj)
+})
+
+# 转换为数据框
+results_df <- do.call(rbind, lapply(results, function(x) {
+  data.frame(
+    Cluster = x$cluster,
+    Cell_Count = x$cell_count,
+    Lineage = x$lineage,
+    Lineage_Score = x$lineage_score,
+    Lineage_Evidence = x$lineage_evidence,
+    Stage = x$stage,
+    Stage_Evidence = x$stage_evidence,
+    Suggested_Annotation = x$suggested_annotation,
+    Confidence = x$confidence,
+    Top_Markers = x$top_markers,
+    stringsAsFactors = FALSE
+  )
+}))
+
+cat("✅ 分析完成！共处理", nrow(results_df), "个clusters\n")
+```
+
+---
+
+# 标注建议结果
+
+## 汇总表
+
+```{r results_summary}
+# 按cluster排序
+results_df <- results_df[order(as.numeric(results_df$Cluster)), ]
+
+# 创建美观的表格
+summary_table <- results_df[, c("Cluster", "Cell_Count", "Suggested_Annotation",
+                                 "Confidence", "Top_Markers")]
+colnames(summary_table) <- c("Cluster", "细胞数", "建议标注", "置信度", "Top 5 Markers")
+
+kable(summary_table, caption = "细胞类型标注建议汇总") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
+  column_spec(3, bold = TRUE, color = "white",
+              background = spec_color(1:nrow(summary_table), option = "D", direction = -1)) %>%
+  column_spec(4, color = ifelse(summary_table$置信度 == "High", "green",
+                                ifelse(summary_table$置信度 == "Medium", "orange", "red")))
+```
+
+## 详细分析
+
+```{r detailed_results}
+# 详细表格
+detailed_table <- results_df[, c("Cluster", "Lineage", "Lineage_Evidence",
+                                  "Stage", "Stage_Evidence")]
+colnames(detailed_table) <- c("Cluster", "谱系判断", "谱系证据", "发育阶段", "阶段证据")
+
+kable(detailed_table, caption = "详细分析结果") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                font_size = 12)
+```
+
+---
+
+# 可视化验证
+
+## 关键Markers表达 {.tabset}
+
+### 谱系Markers
+
+```{r lineage_dotplot, fig.width=14, fig.height=8}
+# 谱系markers
+lineage_genes <- c("Xcr1", "Clec9a", "Itgae", "Cadm1",  # cDC1
+                   "Sirpa", "Cd24a", "Notch2", "Irf4")   # cDC2
+
+existing_lineage <- lineage_genes[lineage_genes %in% rownames(seurat_obj)]
+
+if (length(existing_lineage) > 0) {
+  p_lineage <- DotPlot(seurat_obj,
+                       features = existing_lineage,
+                       group.by = "SCT_clusters",
+                       cols = c("lightgrey", "red")) +
+    RotatedAxis() +
+    labs(title = "谱系Markers表达",
+         subtitle = "cDC1: Xcr1, Clec9a, Itgae | cDC2: Sirpa, Cd24a, Notch2") +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  print(p_lineage)
+}
+```
+
+### 发育阶段Markers
+
+```{r stage_dotplot, fig.width=16, fig.height=8}
+# 发育阶段markers
+stage_genes <- c(
+  # Pre-cDC
+  "S100a10", "Ccr2",
+  # Proliferating
+  "Mki67", "Top2a",
+  # Early Immature
+  "Hspa5", "Pdia6",
+  # Late Immature (LXR)
+  "Apoe", "Nr4a2",
+  # Early Mature
+  "Cxcl9", "Cxcl10", "Cd40",
+  # Late Mature
+  "Ccr7", "Fscn1", "Il12b"
+)
+
+existing_stage <- stage_genes[stage_genes %in% rownames(seurat_obj)]
+
+if (length(existing_stage) > 0) {
+  p_stage <- DotPlot(seurat_obj,
+                     features = existing_stage,
+                     group.by = "SCT_clusters",
+                     cols = c("lightgrey", "blue")) +
+    RotatedAxis() +
+    labs(title = "发育阶段Markers表达",
+         subtitle = "Pre→Prolif→EarlyImm→LateImm→EarlyMat→LateMat") +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  print(p_stage)
+}
+```
+
+### 成熟度Markers
+
+```{r maturity_dotplot, fig.width=14, fig.height=8}
+# 成熟度相关markers
+maturity_genes <- c("Ccr7", "Fscn1", "Cd86", "Cd40", "Cd80", "Relb", "Il12b")
+
+existing_maturity <- maturity_genes[maturity_genes %in% rownames(seurat_obj)]
+
+if (length(existing_maturity) > 0) {
+  p_maturity <- DotPlot(seurat_obj,
+                        features = existing_maturity,
+                        group.by = "SCT_clusters",
+                        cols = c("lightgrey", "darkgreen")) +
+    RotatedAxis() +
+    labs(title = "成熟度Markers表达",
+         subtitle = "高表达 = 更成熟") +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  print(p_maturity)
+}
+```
+
+## 特征图展示
+
+```{r feature_plots, fig.width=16, fig.height=12}
+# 关键基因的FeaturePlot
+key_features <- c("Xcr1", "Sirpa", "Mki67", "Ccr7", "Apoe", "Cxcl10")
+existing_features <- key_features[key_features %in% rownames(seurat_obj)]
+
+if (length(existing_features) >= 4) {
+  p_features <- FeaturePlot(seurat_obj,
+                            features = existing_features,
+                            reduction = "umap",
+                            cols = c("lightgrey", "red"),
+                            ncol = 3,
+                            order = TRUE) &
+    theme(plot.title = element_text(size = 12))
+
+  print(p_features)
+}
+```
+
+---
+
+# 文献标准参考
+
+## cDC1 发育轨迹（6阶段）
+
+根据原文献脚本 `5.script_CITEseq_SAM_WT_aggr_cDC1_subset.R`：
+
+| 阶段 | 原始标注 | 关键Markers | 特征 |
+|------|----------|-------------|------|
+| **Pre-cDC1** | S100a+Ccr2+CD300LG+ | S100a10, Ccr2, Vim, Fcer1g | 前体细胞 |
+| **Proliferating** | Prolif Res cDC1s 1-4 | Mki67, Top2a, Birc5, Stmn1 | 增殖期 |
+| **Early Immature** | Res cDC1s 1, 2 | Hspa5, Pdia6, Creld2, Manf | ER应激相关 |
+| **Late Immature** | Res cDC1s 3, 4 | **Apoe**, Nr4a2, Egr3 | **LXR通路激活** |
+| **Early Mature** | IFN1+, Cxcl9+Cxcl10+ | Cxcl9, Cxcl10, Isg15, Cd40 | 干扰素诱导 |
+| **Late Mature** | Mig cDC1s | **Ccr7**, Fscn1, Il12b, Ccl5 | 迁移型/最高成熟度 |
+
+## cDC2 发育轨迹（6阶段）
+
+| 阶段 | 关键Markers | 特征 |
+|------|-------------|------|
+| **Pre-cDC2** | Sirpa+, Cd24a+, 低成熟markers | 前体细胞 |
+| **Proliferating** | Sirpa+, Mki67+, Top2a+ | 增殖期 |
+| **Early Immature** | Sirpa+, Irf4+, Ccr7低 | 未成熟 |
+| **Late Immature** | Sirpa+, Ccr7开始升高 | 开始成熟 |
+| **Early Mature** | Sirpa+, Ccr7+, Cd86+ | 部分成熟 |
+| **Late Mature** | Sirpa+, Ccr7高, Relb高 | 完全成熟 |
+
+---
+
+# 可复制代码
+
+## 标注向量模板
+
+```{r annotation_vector, results='asis'}
+cat("```r\n")
+cat("# 复制以下代码到您的标注脚本中，根据验证结果修改\n\n")
+cat("cluster_annotations <- c(\n")
+
+for (i in 1:nrow(results_df)) {
+  row <- results_df[i, ]
+  annotation <- gsub("\"", "'", row$Suggested_Annotation)
+  comma <- if(i < nrow(results_df)) "," else ""
+  cat(sprintf('  "%s" = "%s"%s  # %s\n',
+              row$Cluster,
+              annotation,
+              comma,
+              row$Top_Markers))
+}
+cat(")\n")
+cat("```\n")
+```
+
+## 应用标注代码
+
+```{r apply_annotation_code, results='asis'}
+cat("```r\n")
+cat("# 应用标注到Seurat对象\n")
+cat("seurat_obj$cell_type <- cluster_annotations[as.character(seurat_obj$SCT_clusters)]\n\n")
+cat("# 可视化\n")
+cat("DimPlot(seurat_obj, group.by = 'cell_type', label = TRUE, repel = TRUE)\n\n")
+cat("# 保存\n")
+cat("saveRDS(seurat_obj, 'seurat_annotated.rds')\n")
+cat("```\n")
+```
+
+---
+
+# 保存结果
+
+```{r save_results}
+# 保存标注建议到Excel
+output_file <- file.path(output_dir, "Tables", "annotation_suggestions.xlsx")
+write.xlsx(results_df, output_file)
+cat("✅ 标注建议已保存到:", output_file, "\n")
+
+# 保存验证图
+if (exists("p_lineage")) {
+  ggsave(file.path(output_dir, "Plots", "annotation_lineage_dotplot.png"),
+         p_lineage, width = 14, height = 8, dpi = 300)
+}
+
+if (exists("p_stage")) {
+  ggsave(file.path(output_dir, "Plots", "annotation_stage_dotplot.png"),
+         p_stage, width = 16, height = 8, dpi = 300)
+}
+
+cat("✅ 验证图已保存到 Plots/ 目录\n")
+```
+
+---
+
+# 下一步
+
+1. **查看验证图**：确认谱系和发育阶段判断是否正确
+2. **对比文献**：与原文献补充材料对比
+3. **修改标注**：根据验证结果调整建议
+4. **合并相似clusters**：如有多个相同阶段的cluster，可以合并
+5. **应用标注**：使用上面的代码应用到Seurat对象
+
+---
+
+# Session Info
+
+```{r session_info}
+sessionInfo()
+```
+
+---
+
+<div class="alert alert-success">
+**分析完成！**
+- 模式: `r analysis_mode`
+- Clusters: `r nrow(results_df)`
+- 生成时间: `r Sys.time()`
+</div>
