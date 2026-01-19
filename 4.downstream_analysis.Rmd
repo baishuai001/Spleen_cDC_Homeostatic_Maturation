@@ -2316,8 +2316,7 @@ cat("  ✓ seurat_obj_annotated.rds 已保存
 ")
 
 # ==================== 2. 为 Monocle3 准备数据 ====================
-cat("【2/5】为 Monocle3 拟时序分析准备数据...
-")
+cat("【2/5】为 Monocle3 拟时序分析准备数据...\n")
 
 monocle3_data <- list(
   # 表达矩阵
@@ -2327,7 +2326,7 @@ monocle3_data <- list(
   # 元数据
   metadata = seurat_obj@meta.data,
 
-  # 降维结果
+  # 降维结果 - RNA UMAP
   umap = Embeddings(seurat_obj, "umap"),
 
   # 注释信息
@@ -2342,16 +2341,22 @@ if ("pca" %in% names(seurat_obj@reductions)) {
   monocle3_data$pca <- Embeddings(seurat_obj, "pca")
 }
 
-saveRDS(monocle3_data, file.path(output_dir, "Robjects", "data_for_monocle3.rds"))
-cat("  ✓ data_for_monocle3.rds 已保存
-")
-cat("  包含: counts, normalized, metadata, umap, cell_type, pca
+# 🆕 如果有 WNN UMAP 结果
+if ("wnn_umap" %in% names(seurat_obj@reductions)) {
+  monocle3_data$wnn_umap <- Embeddings(seurat_obj, "wnn_umap")
+  cat("  ✓ 已添加 WNN UMAP 坐标\n")
+}
 
-")
+saveRDS(monocle3_data, file.path(output_dir, "Robjects", "data_for_monocle3.rds"))
+cat("  ✓ data_for_monocle3.rds 已保存\n")
+if ("wnn_umap" %in% names(monocle3_data)) {
+  cat("  包含: counts, normalized, metadata, umap, wnn_umap, cell_type, pca\n\n")
+} else {
+  cat("  包含: counts, normalized, metadata, umap, cell_type, pca\n\n")
+}
 
 # ==================== 3. 为 CellOracle 准备数据 ====================
-cat("【3/5】为 CellOracle 基因调控网络分析准备数据...
-")
+cat("【3/5】为 CellOracle 基因调控网络分析准备数据...\n")
 
 celloracle_data <- list(
   # 归一化表达矩阵（CellOracle 需要）
@@ -2360,7 +2365,7 @@ celloracle_data <- list(
   # 元数据
   metadata = seurat_obj@meta.data,
 
-  # UMAP 坐标
+  # RNA UMAP 坐标
   umap_coords = as.data.frame(Embeddings(seurat_obj, "umap")),
 
   # 细胞类型
@@ -2373,12 +2378,19 @@ celloracle_data <- list(
   analysis_mode = analysis_mode
 )
 
-saveRDS(celloracle_data, file.path(output_dir, "Robjects", "data_for_celloracle.rds"))
-cat("  ✓ data_for_celloracle.rds 已保存
-")
-cat("  包含: expression_matrix, metadata, umap_coords, cell_type, variable_genes
+# 🆕 如果有 WNN UMAP 结果
+if ("wnn_umap" %in% names(seurat_obj@reductions)) {
+  celloracle_data$wnn_umap_coords <- as.data.frame(Embeddings(seurat_obj, "wnn_umap"))
+  cat("  ✓ 已添加 WNN UMAP 坐标\n")
+}
 
-")
+saveRDS(celloracle_data, file.path(output_dir, "Robjects", "data_for_celloracle.rds"))
+cat("  ✓ data_for_celloracle.rds 已保存\n")
+if ("wnn_umap_coords" %in% names(celloracle_data)) {
+  cat("  包含: expression_matrix, metadata, umap_coords, wnn_umap_coords, cell_type, variable_genes\n\n")
+} else {
+  cat("  包含: expression_matrix, metadata, umap_coords, cell_type, variable_genes\n\n")
+}
 
 # ==================== 4. 为 scTenifoldKnk 准备数据 ====================
 cat("【4/5】为 scTenifoldKnk 基因敲除模拟准备数据...
@@ -2406,17 +2418,15 @@ cat("  包含: counts, metadata, cell_type
 ")
 
 # ==================== 5. 导出 CSV/TSV 格式（通用）====================
-cat("【5/5】导出通用格式数据...
-")
+cat("【5/5】导出通用格式数据...\n")
 
 # 元数据 CSV
 write.csv(seurat_obj@meta.data,
           file.path(output_dir, "Tables", "cell_metadata.csv"),
           row.names = TRUE)
-cat("  ✓ cell_metadata.csv 已保存
-")
+cat("  ✓ cell_metadata.csv 已保存\n")
 
-# UMAP 坐标
+# RNA UMAP 坐标
 umap_df <- as.data.frame(Embeddings(seurat_obj, "umap"))
 umap_df$cell_id <- rownames(umap_df)
 if (has_author_annotation) {
@@ -2427,8 +2437,25 @@ umap_df$cluster <- seurat_obj$SCT_clusters
 write.csv(umap_df,
           file.path(output_dir, "Tables", "umap_coordinates.csv"),
           row.names = FALSE)
-cat("  ✓ umap_coordinates.csv 已保存
-")
+cat("  ✓ umap_coordinates.csv 已保存 (RNA UMAP)\n")
+
+# 🆕 WNN UMAP 坐标（如果有）
+if ("wnn_umap" %in% names(seurat_obj@reductions)) {
+  wnn_umap_df <- as.data.frame(Embeddings(seurat_obj, "wnn_umap"))
+  wnn_umap_df$cell_id <- rownames(wnn_umap_df)
+  if (has_author_annotation) {
+    wnn_umap_df$cell_type <- seurat_obj$author_annotation
+  }
+  wnn_umap_df$cluster <- seurat_obj$SCT_clusters
+  if ("WNN_clusters" %in% colnames(seurat_obj@meta.data)) {
+    wnn_umap_df$WNN_cluster <- seurat_obj$WNN_clusters
+  }
+
+  write.csv(wnn_umap_df,
+            file.path(output_dir, "Tables", "wnn_umap_coordinates.csv"),
+            row.names = FALSE)
+  cat("  ✓ wnn_umap_coordinates.csv 已保存 (WNN UMAP)\n")
+}
 
 # 基因列表（用于参考）
 gene_lists <- list(
@@ -2473,8 +2500,14 @@ cds <- new_cell_data_set(
   cell_metadata = monocle3_data$metadata
 )
 
-# 使用已有的 UMAP
+# 方法1：使用 RNA UMAP（默认）
 reducedDims(cds)$UMAP <- monocle3_data$umap
+
+# 方法2：使用 WNN UMAP（推荐，如果有）
+if (!is.null(monocle3_data$wnn_umap)) {
+  reducedDims(cds)$UMAP <- monocle3_data$wnn_umap
+  cat('使用 WNN UMAP（多模态整合）\\n')
+}
 
 # 学习轨迹
 cds <- learn_graph(cds)
@@ -2482,6 +2515,7 @@ cds <- order_cells(cds)
 
 # 可视化
 plot_cells(cds, color_cells_by = 'pseudotime')
+plot_cells(cds, color_cells_by = 'cell_type', label_cell_groups = FALSE)
 ```
 
 ### 2. CellOracle 基因调控网络
@@ -2490,9 +2524,27 @@ plot_cells(cds, color_cells_by = 'pseudotime')
 # Python 代码
 import celloracle as co
 import scanpy as sc
+import pandas as pd
 
 # 加载数据（需要先转换为 h5ad 格式）
-adata = sc.read_h5ad('path/to/adata.h5ad')
+# 或从R导出的数据
+celloracle_data = ...  # 从RDS读取
+
+# 创建AnnData对象
+import anndata
+adata = anndata.AnnData(
+    X=celloracle_data['expression_matrix'],
+    obs=celloracle_data['metadata']
+)
+
+# 添加 RNA UMAP
+adata.obsm['X_umap'] = celloracle_data['umap_coords'].values
+
+# 添加 WNN UMAP（如果有）
+if 'wnn_umap_coords' in celloracle_data:
+    adata.obsm['X_wnn_umap'] = celloracle_data['wnn_umap_coords'].values
+    # 使用WNN UMAP进行可视化
+    adata.obsm['X_umap'] = adata.obsm['X_wnn_umap']
 
 # 构建 GRN
 oracle = co.Oracle()
@@ -2519,6 +2571,28 @@ result <- scTenifoldKnk(
 
 # 查看结果
 head(result$diffRegulation)
+```
+
+### 4. 使用 WNN UMAP 坐标（通用）
+
+```r
+# 从CSV读取WNN UMAP坐标
+wnn_umap <- read.csv('", file.path(output_dir, "Tables", "wnn_umap_coordinates.csv"), "')
+
+# 可视化
+library(ggplot2)
+ggplot(wnn_umap, aes(x = wnnUMAP_1, y = wnnUMAP_2, color = cell_type)) +
+  geom_point(size = 0.5) +
+  theme_classic() +
+  labs(title = 'WNN UMAP - Author Annotation')
+
+# 按WNN聚类染色
+if ('WNN_cluster' %in% colnames(wnn_umap)) {
+  ggplot(wnn_umap, aes(x = wnnUMAP_1, y = wnnUMAP_2, color = WNN_cluster)) +
+    geom_point(size = 0.5) +
+    theme_classic() +
+    labs(title = 'WNN UMAP - WNN Clusters')
+}
 ```
 
 ", sep = "")
