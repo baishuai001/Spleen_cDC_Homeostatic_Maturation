@@ -2475,6 +2475,12 @@ if ("pca" %in% names(seurat_obj@reductions)) {
   monocle3_data$pca <- Embeddings(seurat_obj, "pca")
 }
 
+# 🆕 如果有 ADT UMAP 结果
+if ("adt_umap" %in% names(seurat_obj@reductions)) {
+  monocle3_data$adt_umap <- Embeddings(seurat_obj, "adt_umap")
+  cat("  ✓ 已添加 ADT UMAP 坐标\n")
+}
+
 # 🆕 如果有 WNN UMAP 结果
 if ("wnn_umap" %in% names(seurat_obj@reductions)) {
   monocle3_data$wnn_umap <- Embeddings(seurat_obj, "wnn_umap")
@@ -2483,11 +2489,16 @@ if ("wnn_umap" %in% names(seurat_obj@reductions)) {
 
 saveRDS(monocle3_data, file.path(output_dir, "Robjects", "data_for_monocle3.rds"))
 cat("  ✓ data_for_monocle3.rds 已保存\n")
-if ("wnn_umap" %in% names(monocle3_data)) {
-  cat("  包含: counts, normalized, metadata, umap, wnn_umap, cell_type, pca\n\n")
-} else {
-  cat("  包含: counts, normalized, metadata, umap, cell_type, pca\n\n")
+
+# 动态显示包含的内容
+content_list <- c("counts, normalized, metadata, umap, cell_type, pca")
+if ("adt_umap" %in% names(monocle3_data)) {
+  content_list <- paste0(content_list, ", adt_umap")
 }
+if ("wnn_umap" %in% names(monocle3_data)) {
+  content_list <- paste0(content_list, ", wnn_umap")
+}
+cat("  包含:", content_list, "\n\n")
 
 # ==================== 3. 为 CellOracle 准备数据 ====================
 cat("【3/5】为 CellOracle 基因调控网络分析准备数据...\n")
@@ -2512,6 +2523,12 @@ celloracle_data <- list(
   analysis_mode = analysis_mode
 )
 
+# 🆕 如果有 ADT UMAP 结果
+if ("adt_umap" %in% names(seurat_obj@reductions)) {
+  celloracle_data$adt_umap_coords <- as.data.frame(Embeddings(seurat_obj, "adt_umap"))
+  cat("  ✓ 已添加 ADT UMAP 坐标\n")
+}
+
 # 🆕 如果有 WNN UMAP 结果
 if ("wnn_umap" %in% names(seurat_obj@reductions)) {
   celloracle_data$wnn_umap_coords <- as.data.frame(Embeddings(seurat_obj, "wnn_umap"))
@@ -2520,11 +2537,16 @@ if ("wnn_umap" %in% names(seurat_obj@reductions)) {
 
 saveRDS(celloracle_data, file.path(output_dir, "Robjects", "data_for_celloracle.rds"))
 cat("  ✓ data_for_celloracle.rds 已保存\n")
-if ("wnn_umap_coords" %in% names(celloracle_data)) {
-  cat("  包含: expression_matrix, metadata, umap_coords, wnn_umap_coords, cell_type, variable_genes\n\n")
-} else {
-  cat("  包含: expression_matrix, metadata, umap_coords, cell_type, variable_genes\n\n")
+
+# 动态显示包含的内容
+content_list <- "expression_matrix, metadata, umap_coords, cell_type, variable_genes"
+if ("adt_umap_coords" %in% names(celloracle_data)) {
+  content_list <- paste0(content_list, ", adt_umap_coords")
 }
+if ("wnn_umap_coords" %in% names(celloracle_data)) {
+  content_list <- paste0(content_list, ", wnn_umap_coords")
+}
+cat("  包含:", content_list, "\n\n")
 
 # ==================== 4. 为 scTenifoldKnk 准备数据 ====================
 cat("【4/5】为 scTenifoldKnk 基因敲除模拟准备数据...
@@ -2572,6 +2594,21 @@ write.csv(umap_df,
           file.path(output_dir, "Tables", "umap_coordinates.csv"),
           row.names = FALSE)
 cat("  ✓ umap_coordinates.csv 已保存 (RNA UMAP)\n")
+
+# 🆕 ADT UMAP 坐标（如果有）
+if ("adt_umap" %in% names(seurat_obj@reductions)) {
+  adt_umap_df <- as.data.frame(Embeddings(seurat_obj, "adt_umap"))
+  adt_umap_df$cell_id <- rownames(adt_umap_df)
+  if (has_author_annotation) {
+    adt_umap_df$cell_type <- seurat_obj$author_annotation
+  }
+  adt_umap_df$cluster <- seurat_obj$SCT_clusters
+
+  write.csv(adt_umap_df,
+            file.path(output_dir, "Tables", "adt_umap_coordinates.csv"),
+            row.names = FALSE)
+  cat("  ✓ adt_umap_coordinates.csv 已保存 (ADT UMAP)\n")
+}
 
 # 🆕 WNN UMAP 坐标（如果有）
 if ("wnn_umap" %in% names(seurat_obj@reductions)) {
