@@ -467,15 +467,56 @@ cat("🔥 导入作者原始注释\n")
 cat(strrep("=", 80), "\n\n")
 
 # ==================== 加载包含原始注释的 metadata ====================
-# 注意：metadata_original 来自 CITE-seq_Complete_Analysis_v3.Rmd 的输出
-# 它包含了作者在原文献中的细胞类型注释
+# metadata_original 存储在 CITE-seq_Complete_Analysis_v3.Rmd 生成的缓存文件中
+# 文件名格式：{mode}_01_subset_extracted.rds（如 cDC1_01_subset_extracted.rds）
 
-# 查找 metadata_original 文件
-metadata_file <- file.path(v3_robjects_dir, paste0(project_name, "_metadata_original.rds"))
+# 构建缓存文件路径
+if (analysis_mode == "integrated") {
+  subset_cache_file <- file.path(v3_robjects_dir, "integrated_01_subset_extracted.rds")
+} else {
+  subset_cache_file <- file.path(v3_robjects_dir, paste0(analysis_mode, "_01_subset_extracted.rds"))
+}
 
-# 如果独立的 metadata 文件不存在，尝试从 pre_wnn.rds 或 final.rds 中提取
-if (!file.exists(metadata_file)) {
-  cat("  ⚠️ 未找到独立的 metadata_original.rds\n")
+cat("📂 查找缓存文件:\n")
+cat("  路径:", subset_cache_file, "\n\n")
+
+# 尝试从缓存文件加载 metadata_original
+metadata_original <- NULL
+
+if (file.exists(subset_cache_file)) {
+  cat("  ✅ 找到缓存文件，正在加载...\n")
+  subset_data <- readRDS(subset_cache_file)
+
+  if ("metadata" %in% names(subset_data)) {
+    metadata_original <- subset_data$metadata
+    cat("  ✅ 已从缓存文件提取 metadata_original\n")
+    cat("  细胞数:", nrow(metadata_original), "\n")
+    cat("  列数:", ncol(metadata_original), "\n\n")
+
+    # 显示可用的注释列
+    annotation_cols <- intersect(
+      c("Annotation", "Annotation_detailed", "final_annotation2021",
+        "annotated_clusters", "minimalist_annotation", "original_cluster"),
+      colnames(metadata_original)
+    )
+
+    if (length(annotation_cols) > 0) {
+      cat("  🎯 发现以下注释列:\n")
+      for (col in annotation_cols) {
+        cat("    -", col, ":", length(unique(metadata_original[[col]])), "种类型\n")
+      }
+      cat("\n")
+    }
+  } else {
+    cat("  ⚠️ 缓存文件中未找到 metadata 字段\n\n")
+  }
+
+  # 清理临时变量
+  rm(subset_data)
+  gc()
+
+} else {
+  cat("  ⚠️ 未找到缓存文件:", subset_cache_file, "\n")
   cat("  尝试从 Seurat 对象中提取原始注释...\n\n")
 
   # 检查 seurat_obj 中是否已有作者注释
@@ -490,13 +531,9 @@ if (!file.exists(metadata_file)) {
     cat("    ", paste(available_annotations, collapse = ", "), "\n\n")
     metadata_original <- seurat_obj@meta.data
   } else {
-    cat("  ❌ 未找到作者注释，将跳过注释相关分析\n")
-    cat("  请确保已运行 CITE-seq_Complete_Analysis_v3.Rmd 并保存了包含原始注释的对象\n\n")
-    metadata_original <- NULL
+    cat("  ❌ 未找到作者注释\n")
+    cat("  请确保已运行 CITE-seq_Complete_Analysis_v3.Rmd 的 Section 2.2\n\n")
   }
-} else {
-  metadata_original <- readRDS(metadata_file)
-  cat("  ✅ 已加载 metadata_original.rds\n\n")
 }
 
 # ==================== 添加作者注释到 Seurat 对象 ====================
