@@ -1630,9 +1630,69 @@ if (has_author_annotation) {
   plot_and_save(p_compare, "clustering_vs_annotation_comparison", "Annotation",
                 width = 20, height = 9)
 
-  cat("✓ 作者注释可视化完成
+  # ==================== 🔥 WNN UMAP 上的作者注释（重要！）====================
+  if ("wnn_umap" %in% names(seurat_obj@reductions)) {
+    cat("\n【WNN UMAP可视化】\n")
 
-")
+    # WNN UMAP + 作者注释
+    p_wnn_author <- DimPlot(seurat_obj, reduction = "wnn_umap",
+                            group.by = "author_annotation",
+                            label = TRUE, repel = TRUE, label.size = 4) +
+      labs(title = "Author Annotation on WNN UMAP",
+           subtitle = paste0("WNN-combined | ", length(unique(seurat_obj$author_annotation)), " cell types")) +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+
+    plot_and_save(p_wnn_author, "author_annotation_wnn_umap", "Annotation",
+                  width = 12, height = 10)
+
+    # WNN UMAP 三联图：WNN聚类 vs 作者注释 vs 详细注释
+    p_wnn_clusters <- DimPlot(seurat_obj, reduction = "wnn_umap",
+                              group.by = "WNN_clusters",
+                              label = TRUE, repel = TRUE, label.size = 4) +
+      labs(title = "WNN Clusters") +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+    p_wnn_annot <- DimPlot(seurat_obj, reduction = "wnn_umap",
+                           group.by = "author_annotation",
+                           label = TRUE, repel = TRUE, label.size = 4) +
+      labs(title = "Author Annotation") +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+    if (has_detailed_annotation) {
+      p_wnn_detailed <- DimPlot(seurat_obj, reduction = "wnn_umap",
+                                group.by = "author_annotation_detailed",
+                                label = TRUE, repel = TRUE, label.size = 3) +
+        labs(title = "Detailed Annotation") +
+        theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+              legend.text = element_text(size = 7))
+
+      p_wnn_triple <- p_wnn_clusters | p_wnn_annot | p_wnn_detailed
+      p_wnn_triple <- p_wnn_triple + plot_annotation(
+        title = "WNN UMAP: Clusters vs Author Annotations",
+        subtitle = "Comparison of WNN clustering with author's cell type annotations",
+        theme = theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+                     plot.subtitle = element_text(hjust = 0.5, size = 12))
+      )
+
+      plot_and_save(p_wnn_triple, "wnn_umap_triple_comparison", "Annotation",
+                    width = 24, height = 8)
+    } else {
+      p_wnn_double <- p_wnn_clusters | p_wnn_annot
+      p_wnn_double <- p_wnn_double + plot_annotation(
+        title = "WNN UMAP: Clusters vs Author Annotation",
+        theme = theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+      )
+
+      plot_and_save(p_wnn_double, "wnn_umap_comparison", "Annotation",
+                    width = 18, height = 8)
+    }
+
+    cat("✓ WNN UMAP作者注释可视化完成\n")
+  } else {
+    cat("⚠️ 当前对象无WNN UMAP降维结果\n")
+  }
+
+  cat("\n✓ 作者注释可视化完成\n\n")
 }
 ```
 
