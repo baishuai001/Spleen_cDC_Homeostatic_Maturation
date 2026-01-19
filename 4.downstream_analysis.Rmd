@@ -470,11 +470,13 @@ cat(strrep("=", 80), "\n\n")
 # metadata_original 存储在 CITE-seq_Complete_Analysis_v3.Rmd 生成的缓存文件中
 # 文件名格式：{mode}_01_subset_extracted.rds（如 cDC1_01_subset_extracted.rds）
 
-# 构建缓存文件路径
+# 构建缓存文件路径（缓存文件在 results/Cache/ 目录）
+v3_cache_dir <- file.path(v3_output_dir, "Cache")
+
 if (analysis_mode == "integrated") {
-  subset_cache_file <- file.path(v3_robjects_dir, "integrated_01_subset_extracted.rds")
+  subset_cache_file <- file.path(v3_cache_dir, "integrated_01_subset_extracted.rds")
 } else {
-  subset_cache_file <- file.path(v3_robjects_dir, paste0(analysis_mode, "_01_subset_extracted.rds"))
+  subset_cache_file <- file.path(v3_cache_dir, paste0(analysis_mode, "_01_subset_extracted.rds"))
 }
 
 cat("📂 查找缓存文件:\n")
