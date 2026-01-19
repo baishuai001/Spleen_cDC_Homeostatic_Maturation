@@ -2040,29 +2040,45 @@ if (has_author_annotation) {
   key_genes <- unique(key_genes)[1:min(9, length(unique(key_genes)))]
 
   if (length(key_genes) > 0) {
-    # RNA UMAP版本
+    # --- RNA UMAP版本 ---
     p_feature <- FeaturePlot(seurat_obj,
                              features = key_genes,
                              reduction = "umap",
                              ncol = 3,
                              pt.size = 0.5,
-                             cols = c("lightgrey", "blue")) +
+                             cols = c("lightgrey", "red")) +
       plot_annotation(title = paste0("Key Stage Markers - ", analysis_mode, " mode (RNA UMAP)"),
-                     subtitle = "Expression level shown as color intensity")
+                     subtitle = "Expression level in RNA space")
 
     plot_and_save(p_feature, "multimodal_featureplot_stage_markers", "Markers",
                   width = 14, height = ceiling(length(key_genes) / 3) * 4)
 
-    # 🆕 WNN UMAP版本（如果有）
+    # --- ADT UMAP版本（如果有）---
+    if ("adt_umap" %in% names(seurat_obj@reductions)) {
+      p_feature_adt <- FeaturePlot(seurat_obj,
+                                   features = key_genes,
+                                   reduction = "adt_umap",
+                                   ncol = 3,
+                                   pt.size = 0.5,
+                                   cols = c("lightgrey", "red")) +
+        plot_annotation(title = paste0("Key Stage Markers - ", analysis_mode, " mode (ADT UMAP)"),
+                       subtitle = "Expression level in ADT protein space")
+
+      plot_and_save(p_feature_adt, "multimodal_featureplot_stage_markers_adt", "Markers",
+                    width = 14, height = ceiling(length(key_genes) / 3) * 4)
+      cat("  ✓ 已生成 ADT UMAP 版本\n")
+    }
+
+    # --- WNN UMAP版本（如果有）---
     if ("wnn_umap" %in% names(seurat_obj@reductions)) {
       p_feature_wnn <- FeaturePlot(seurat_obj,
                                    features = key_genes,
                                    reduction = "wnn_umap",
                                    ncol = 3,
                                    pt.size = 0.5,
-                                   cols = c("lightgrey", "blue")) +
+                                   cols = c("lightgrey", "red")) +
         plot_annotation(title = paste0("Key Stage Markers - ", analysis_mode, " mode (WNN UMAP)"),
-                       subtitle = "Expression level on WNN-integrated space")
+                       subtitle = "Expression level in WNN-integrated space")
 
       plot_and_save(p_feature_wnn, "multimodal_featureplot_stage_markers_wnn", "Markers",
                     width = 14, height = ceiling(length(key_genes) / 3) * 4)
@@ -2223,7 +2239,32 @@ if (has_author_annotation) {
                     width = 14,
                     height = ceiling(length(genes_to_plot) / 3) * 4)
 
-      # 🆕 WNN UMAP版本（如果有）
+      # --- ADT UMAP版本（如果有）---
+      if ("adt_umap" %in% names(seurat_obj@reductions)) {
+        p_feature_group_adt <- FeaturePlot(seurat_obj,
+                                           features = genes_to_plot,
+                                           reduction = "adt_umap",
+                                           ncol = 3,
+                                           pt.size = 0.5,
+                                           cols = c("lightgrey", "red")) &
+          theme(plot.title = element_text(size = 10, face = "bold"))
+
+        p_feature_group_adt <- p_feature_group_adt +
+          plot_annotation(
+            title = paste0("基因表达: ", group_name, " (ADT UMAP)"),
+            subtitle = paste0("ADT蛋白空间 | 共", length(genes_in_group), "个基因 | 显示前", length(genes_to_plot), "个"),
+            theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+                         plot.subtitle = element_text(hjust = 0.5, size = 12))
+          )
+
+        plot_and_save(p_feature_group_adt,
+                      paste0("extended_genes_featureplot_", filename_safe, "_adt"),
+                      "Markers",
+                      width = 14,
+                      height = ceiling(length(genes_to_plot) / 3) * 4)
+      }
+
+      # --- WNN UMAP版本（如果有）---
       if ("wnn_umap" %in% names(seurat_obj@reductions)) {
         p_feature_group_wnn <- FeaturePlot(seurat_obj,
                                            features = genes_to_plot,
@@ -2274,22 +2315,22 @@ if (has_author_annotation) {
                   height = 10)
 
     # ==================== 4. ADT蛋白分别FeaturePlot ====================
-    cat("【4/4】生成ADT蛋白分别FeaturePlot（RNA UMAP + WNN UMAP）...\n")
+    cat("【4/4】生成ADT蛋白分别FeaturePlot（RNA UMAP + ADT UMAP + WNN UMAP）...\n")
 
     # 每次最多显示9个蛋白（3x3布局）
     for (i in seq(1, length(adt_available), by = 9)) {
       adt_batch <- adt_available[i:min(i+8, length(adt_available))]
 
       # --- RNA UMAP版本 ---
-      p_feature_adt <- FeaturePlot(seurat_obj,
-                                   features = adt_batch,
-                                   reduction = "umap",
-                                   ncol = 3,
-                                   pt.size = 0.5,
-                                   cols = c("lightgrey", "blue")) &
+      p_feature_adt_rna <- FeaturePlot(seurat_obj,
+                                       features = adt_batch,
+                                       reduction = "umap",
+                                       ncol = 3,
+                                       pt.size = 0.5,
+                                       cols = c("lightgrey", "blue")) &
         theme(plot.title = element_text(size = 10, face = "bold"))
 
-      p_feature_adt <- p_feature_adt +
+      p_feature_adt_rna <- p_feature_adt_rna +
         plot_annotation(
           title = "ADT蛋白表达（发育门控） - RNA UMAP",
           subtitle = paste0("批次", ceiling(i/9), " | ", length(adt_batch), "个蛋白 | RNA降维空间"),
@@ -2297,11 +2338,36 @@ if (has_author_annotation) {
                        plot.subtitle = element_text(hjust = 0.5, size = 12))
         )
 
-      plot_and_save(p_feature_adt,
+      plot_and_save(p_feature_adt_rna,
                     paste0("adt_proteins_featureplot_batch", ceiling(i/9)),
                     "Markers",
                     width = 14,
                     height = ceiling(length(adt_batch) / 3) * 4)
+
+      # --- ADT UMAP版本（如果存在）⭐ ---
+      if ("adt_umap" %in% names(seurat_obj@reductions)) {
+        p_feature_adt_adt <- FeaturePlot(seurat_obj,
+                                         features = adt_batch,
+                                         reduction = "adt_umap",
+                                         ncol = 3,
+                                         pt.size = 0.5,
+                                         cols = c("lightgrey", "blue")) &
+          theme(plot.title = element_text(size = 10, face = "bold"))
+
+        p_feature_adt_adt <- p_feature_adt_adt +
+          plot_annotation(
+            title = "ADT蛋白表达（发育门控） - ADT UMAP ⭐",
+            subtitle = paste0("批次", ceiling(i/9), " | ", length(adt_batch), "个蛋白 | ADT蛋白降维空间（最佳）"),
+            theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+                         plot.subtitle = element_text(hjust = 0.5, size = 12))
+          )
+
+        plot_and_save(p_feature_adt_adt,
+                      paste0("adt_proteins_featureplot_batch", ceiling(i/9), "_adt"),
+                      "Markers",
+                      width = 14,
+                      height = ceiling(length(adt_batch) / 3) * 4)
+      }
 
       # --- WNN UMAP版本（如果存在）---
       if ("wnn_umap" %in% names(seurat_obj@reductions)) {
