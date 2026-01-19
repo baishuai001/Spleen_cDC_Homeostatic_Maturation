@@ -447,781 +447,6 @@ cat("  - 谱系基因数:", length(genes_lineage), "\n\n")
 
 ---
 
-# 🔥 作者注释导入与分析
-
-> **本节核心功能**：
-> 1. 导入作者的原始细胞类型注释（两版：详细版和最终版）
-> 2. 对比您的聚类结果与作者注释的关系
-> 3. 反推作者注释时依赖的差异基因
-> 4. 为后续拟时序分析做准备
-
-## 导入作者注释
-
-```{r import_author_annotation}
-################################################################################
-##################### 🔥 导入作者原始注释 ######################################
-################################################################################
-
-cat("\n", strrep("=", 80), "\n")
-cat("🔥 导入作者原始注释\n")
-cat(strrep("=", 80), "\n\n")
-
-# ==================== 加载包含原始注释的 metadata ====================
-# metadata_original 存储在 CITE-seq_Complete_Analysis_v3.Rmd 生成的缓存文件中
-# 文件名格式：{mode}_01_subset_extracted.rds（如 cDC1_01_subset_extracted.rds）
-
-# 构建缓存文件路径（缓存文件在 results/Cache/ 目录）
-v3_cache_dir <- file.path(v3_output_dir, "Cache")
-
-if (analysis_mode == "integrated") {
-  subset_cache_file <- file.path(v3_cache_dir, "integrated_01_subset_extracted.rds")
-} else {
-  subset_cache_file <- file.path(v3_cache_dir, paste0(analysis_mode, "_01_subset_extracted.rds"))
-}
-
-cat("📂 查找缓存文件:\n")
-cat("  路径:", subset_cache_file, "\n\n")
-
-# 尝试从缓存文件加载 metadata_original
-metadata_original <- NULL
-
-if (file.exists(subset_cache_file)) {
-  cat("  ✅ 找到缓存文件，正在加载...\n")
-  subset_data <- readRDS(subset_cache_file)
-
-  if ("metadata" %in% names(subset_data)) {
-    metadata_original <- subset_data$metadata
-    cat("  ✅ 已从缓存文件提取 metadata_original\n")
-    cat("  细胞数:", nrow(metadata_original), "\n")
-    cat("  列数:", ncol(metadata_original), "\n\n")
-
-    # 显示可用的注释列
-    annotation_cols <- intersect(
-      c("Annotation", "Annotation_detailed", "final_annotation2021",
-        "annotated_clusters", "minimalist_annotation", "original_cluster"),
-      colnames(metadata_original)
-    )
-
-    if (length(annotation_cols) > 0) {
-      cat("  🎯 发现以下注释列:\n")
-      for (col in annotation_cols) {
-        cat("    -", col, ":", length(unique(metadata_original[[col]])), "种类型\n")
-      }
-      cat("\n")
-    }
-  } else {
-    cat("  ⚠️ 缓存文件中未找到 metadata 字段\n\n")
-  }
-
-  # 清理临时变量
-  rm(subset_data)
-  gc()
-
-} else {
-  cat("  ⚠️ 未找到缓存文件:", subset_cache_file, "\n")
-  cat("  尝试从 Seurat 对象中提取原始注释...\n\n")
-
-  # 检查 seurat_obj 中是否已有作者注释
-  available_annotations <- intersect(
-    c("Annotation", "Annotation_detailed", "final_annotation2021",
-      "annotated_clusters", "minimalist_annotation"),
-    colnames(seurat_obj@meta.data)
-  )
-
-  if (length(available_annotations) > 0) {
-    cat("  ✅ 在 Seurat 对象中找到以下注释列:\n")
-    cat("    ", paste(available_annotations, collapse = ", "), "\n\n")
-    metadata_original <- seurat_obj@meta.data
-  } else {
-    cat("  ❌ 未找到作者注释\n")
-    cat("  请确保已运行 CITE-seq_Complete_Analysis_v3.Rmd 的 Section 2.2\n\n")
-  }
-}
-
-# ==================== 添加作者注释到 Seurat 对象 ====================
-if (!is.null(metadata_original)) {
-
-  # 确保细胞顺序一致
-  common_cells <- intersect(rownames(seurat_obj@meta.data), rownames(metadata_original))
-  cat("  共有细胞数:", length(common_cells), "/", ncol(seurat_obj), "\n\n")
-
-  # ---------- 添加 final_annotation2021（最终版注释）----------
-  if ("final_annotation2021" %in% colnames(metadata_original)) {
-    seurat_obj$author_annotation <- metadata_original[common_cells, "final_annotation2021"]
-    cat("  ✅ 已添加 author_annotation (final_annotation2021)\n")
-    cat("     细胞类型分布:\n")
-    print(table(seurat_obj$author_annotation))
-    cat("\n")
-  } else if ("Annotation" %in% colnames(metadata_original)) {
-    seurat_obj$author_annotation <- metadata_original[common_cells, "Annotation"]
-    cat("  ✅ 已添加 author_annotation (Annotation)\n")
-    cat("     细胞类型分布:\n")
-    print(table(seurat_obj$author_annotation))
-    cat("\n")
-  }
-
-  # ---------- 添加 Annotation_detailed（详细版注释）----------
-  if ("Annotation_detailed" %in% colnames(metadata_original)) {
-    seurat_obj$author_annotation_detailed <- metadata_original[common_cells, "Annotation_detailed"]
-    cat("  ✅ 已添加 author_annotation_detailed (Annotation_detailed)\n")
-    cat("     细胞类型分布:\n")
-    print(table(seurat_obj$author_annotation_detailed))
-    cat("\n")
-  } else if ("annotated_clusters" %in% colnames(metadata_original)) {
-    seurat_obj$author_annotation_detailed <- metadata_original[common_cells, "annotated_clusters"]
-    cat("  ✅ 已添加 author_annotation_detailed (annotated_clusters)\n")
-    cat("     细胞类型分布:\n")
-    print(table(seurat_obj$author_annotation_detailed))
-    cat("\n")
-  }
-
-  # ---------- 对于 integrated 模式，添加 subset 信息 ----------
-  if (analysis_mode == "integrated") {
-    if ("subset" %in% colnames(metadata_original)) {
-      seurat_obj$subset <- metadata_original[common_cells, "subset"]
-      cat("  ✅ 已添加 subset (cDC1/cDC2 来源)\n")
-      print(table(seurat_obj$subset))
-      cat("\n")
-    }
-    if ("original_cluster" %in% colnames(metadata_original)) {
-      seurat_obj$original_cluster <- metadata_original[common_cells, "original_cluster"]
-      cat("  ✅ 已添加 original_cluster\n\n")
-    }
-  }
-
-  has_author_annotation <- "author_annotation" %in% colnames(seurat_obj@meta.data)
-  has_detailed_annotation <- "author_annotation_detailed" %in% colnames(seurat_obj@meta.data)
-
-} else {
-  has_author_annotation <- FALSE
-  has_detailed_annotation <- FALSE
-}
-
-cat(strrep("=", 80), "\n\n")
-```
-
-## 可视化作者注释
-
-```{r visualize_author_annotation, fig.width=16, fig.height=8}
-################################################################################
-##################### 可视化作者注释 ############################################
-################################################################################
-
-if (has_author_annotation) {
-
-  cat("📊 可视化作者注释...\n\n")
-
-  # 创建输出目录
-  dir.create(file.path(output_dir, "Plots", "Annotation"),
-             showWarnings = FALSE, recursive = TRUE)
-
-  # ==================== 最终版注释 UMAP ====================
-  p_annot_umap <- DimPlot(seurat_obj, reduction = "umap",
-                          group.by = "author_annotation",
-                          label = TRUE, repel = TRUE, label.size = 4) +
-    labs(title = paste0("Author Annotation (", analysis_mode, " mode)"),
-         subtitle = paste0(length(unique(seurat_obj$author_annotation)), " cell types")) +
-    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-
-  plot_and_save(p_annot_umap, "author_annotation_umap", "Annotation",
-                width = 12, height = 10)
-
-  # ==================== 详细版注释 UMAP ====================
-  if (has_detailed_annotation) {
-    p_annot_detailed <- DimPlot(seurat_obj, reduction = "umap",
-                                group.by = "author_annotation_detailed",
-                                label = TRUE, repel = TRUE, label.size = 3) +
-      labs(title = paste0("Author Annotation Detailed (", analysis_mode, " mode)"),
-           subtitle = "More granular cell type classification") +
-      theme(plot.title = element_text(hjust = 0.5, face = "bold"),
-            legend.text = element_text(size = 8))
-
-    plot_and_save(p_annot_detailed, "author_annotation_detailed_umap", "Annotation",
-                  width = 14, height = 10)
-  }
-
-  # ==================== 对比图：您的聚类 vs 作者注释 ====================
-  p_compare1 <- DimPlot(seurat_obj, reduction = "umap",
-                        group.by = "SCT_clusters",
-                        label = TRUE, repel = TRUE, label.size = 4) +
-    labs(title = "Your Clustering (SCT_clusters)") +
-    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-
-  p_compare2 <- DimPlot(seurat_obj, reduction = "umap",
-                        group.by = "author_annotation",
-                        label = TRUE, repel = TRUE, label.size = 4) +
-    labs(title = "Author Annotation") +
-    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
-
-  p_compare <- p_compare1 | p_compare2
-  p_compare <- p_compare + plot_annotation(
-    title = "Comparison: Your Clustering vs Author Annotation",
-    theme = theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
-  )
-
-  plot_and_save(p_compare, "clustering_vs_annotation_comparison", "Annotation",
-                width = 20, height = 9)
-
-  cat("✓ 作者注释可视化完成\n\n")
-}
-```
-
-## 聚类与作者注释对应关系分析
-
-```{r cluster_annotation_correspondence, fig.width=14, fig.height=10}
-################################################################################
-##################### 聚类与作者注释对应关系 ####################################
-################################################################################
-
-if (has_author_annotation) {
-
-  cat("\n", strrep("=", 80), "\n")
-  cat("🔍 分析聚类与作者注释的对应关系\n")
-  cat(strrep("=", 80), "\n\n")
-
-  # ==================== 创建对应关系表 ====================
-  correspondence_table <- table(seurat_obj$SCT_clusters, seurat_obj$author_annotation)
-
-  cat("【聚类-注释对应表】\n")
-  print(correspondence_table)
-  cat("\n")
-
-  # 保存对应关系表
-  correspondence_df <- as.data.frame.matrix(correspondence_table)
-  correspondence_df$Cluster <- rownames(correspondence_df)
-  correspondence_df <- correspondence_df[, c("Cluster", setdiff(names(correspondence_df), "Cluster"))]
-
-  write.xlsx(correspondence_df,
-             file.path(output_dir, "Tables", "cluster_annotation_correspondence.xlsx"))
-  cat("✓ 对应关系表已保存: cluster_annotation_correspondence.xlsx\n\n")
-
-  # ==================== 计算每个 cluster 的主要注释 ====================
-  cluster_dominant_annotation <- apply(correspondence_table, 1, function(x) {
-    names(which.max(x))
-  })
-
-  cluster_purity <- apply(correspondence_table, 1, function(x) {
-    round(max(x) / sum(x) * 100, 1)
-  })
-
-  cluster_summary <- data.frame(
-    Cluster = names(cluster_dominant_annotation),
-    Dominant_Annotation = cluster_dominant_annotation,
-    Purity_Percent = cluster_purity,
-    Total_Cells = rowSums(correspondence_table)
-  )
-
-  cat("【每个Cluster的主要注释】\n")
-  print(cluster_summary)
-  cat("\n")
-
-  write.xlsx(cluster_summary,
-             file.path(output_dir, "Tables", "cluster_dominant_annotation.xlsx"))
-
-  # ==================== 可视化：热图 ====================
-  # 转换为比例
-  correspondence_prop <- prop.table(correspondence_table, margin = 1) * 100
-
-  # 使用 pheatmap 或 ggplot2 绑定
-  library(reshape2)
-  heatmap_data <- melt(as.matrix(correspondence_prop))
-  colnames(heatmap_data) <- c("Cluster", "Annotation", "Percentage")
-
-  p_heatmap <- ggplot(heatmap_data, aes(x = Annotation, y = factor(Cluster), fill = Percentage)) +
-    geom_tile(color = "white") +
-    geom_text(aes(label = ifelse(Percentage > 5, round(Percentage, 0), "")),
-              size = 3, color = "black") +
-    scale_fill_gradientn(colors = c("white", "lightyellow", "orange", "red", "darkred"),
-                         values = c(0, 0.1, 0.3, 0.6, 1),
-                         name = "Percentage (%)") +
-    labs(title = "Cluster Composition by Author Annotation",
-         subtitle = "Numbers show percentage of cells in each cluster",
-         x = "Author Annotation", y = "Your Cluster") +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
-          axis.text.y = element_text(size = 10),
-          plot.title = element_text(hjust = 0.5, face = "bold"))
-
-  plot_and_save(p_heatmap, "cluster_annotation_heatmap", "Annotation",
-                width = max(10, length(unique(seurat_obj$author_annotation)) * 0.8),
-                height = max(8, length(unique(seurat_obj$SCT_clusters)) * 0.5))
-
-  # ==================== Sankey/Alluvial 图（可选）====================
-  # 使用条形图展示对应关系
-  p_bar <- ggplot(heatmap_data, aes(x = factor(Cluster), y = Percentage, fill = Annotation)) +
-    geom_bar(stat = "identity", position = "stack") +
-    labs(title = "Cluster Composition",
-         subtitle = "Stacked bar showing annotation composition per cluster",
-         x = "Your Cluster", y = "Percentage (%)") +
-    theme_minimal() +
-    theme(axis.text.x = element_text(angle = 0, size = 10),
-          plot.title = element_text(hjust = 0.5, face = "bold"),
-          legend.position = "right")
-
-  plot_and_save(p_bar, "cluster_composition_barplot", "Annotation",
-                width = 14, height = 8)
-
-  cat("✓ 对应关系分析完成\n\n")
-}
-```
-
-## 🔥 反推作者注释依赖的基因（FindAllMarkers）
-
-```{r find_annotation_markers, fig.width=16, fig.height=12}
-################################################################################
-##################### 🔥 反推作者注释依赖的基因 ##################################
-################################################################################
-
-if (has_author_annotation) {
-
-  cat("\n", strrep("=", 80), "\n")
-  cat("🔥 反推作者注释依赖的Marker基因\n")
-  cat(strrep("=", 80), "\n\n")
-
-  cat("【目的】\n")
-  cat("  使用作者的注释作为分组依据，运行 FindAllMarkers\n")
-  cat("  得到的差异基因就是区分各细胞类型的关键marker\n\n")
-
-  # ==================== 基于作者最终注释的 FindAllMarkers ====================
-  cat("【1/2】分析最终版注释 (author_annotation) 的markers...\n")
-
-  Idents(seurat_obj) <- seurat_obj$author_annotation
-
-  markers_author_annotation <- FindAllMarkers(
-    seurat_obj,
-    assay = "SCT",
-    only.pos = TRUE,
-    min.pct = 0.25,
-    logfc.threshold = 0.25,
-    verbose = FALSE
-  )
-
-  cat("  发现", nrow(markers_author_annotation), "个marker基因\n")
-
-  # 计算 score
-  markers_author_annotation$score <- markers_author_annotation$pct.1 /
-    (markers_author_annotation$pct.2 + 0.01) * markers_author_annotation$avg_log2FC
-
-  # 保存 RDS
-  saveRDS(markers_author_annotation,
-          file.path(output_dir, "Robjects", "markers_author_annotation.rds"))
-
-  # 按细胞类型整理并保存 Excel
-  marker_list <- split(markers_author_annotation, markers_author_annotation$cluster)
-  marker_list <- lapply(marker_list, function(x) {
-    x[order(x$score, decreasing = TRUE), ]
-  })
-
-  write.xlsx(marker_list,
-             file.path(output_dir, "Tables", "markers_author_annotation.xlsx"))
-  cat("  ✓ 已保存: markers_author_annotation.xlsx\n\n")
-
-  # ==================== 显示每个细胞类型的 Top Markers ====================
-  top_markers_author <- markers_author_annotation %>%
-    group_by(cluster) %>%
-    slice_max(order_by = score, n = 5) %>%
-    select(cluster, gene, avg_log2FC, pct.1, pct.2, score)
-
-  cat("【各细胞类型 Top 5 Markers】\n")
-  print(as.data.frame(top_markers_author))
-  cat("\n")
-
-  # ==================== 基于详细版注释的 FindAllMarkers（可选）====================
-  if (has_detailed_annotation) {
-    cat("【2/2】分析详细版注释 (author_annotation_detailed) 的markers...\n")
-
-    Idents(seurat_obj) <- seurat_obj$author_annotation_detailed
-
-    markers_detailed <- FindAllMarkers(
-      seurat_obj,
-      assay = "SCT",
-      only.pos = TRUE,
-      min.pct = 0.25,
-      logfc.threshold = 0.25,
-      verbose = FALSE
-    )
-
-    cat("  发现", nrow(markers_detailed), "个marker基因\n")
-
-    markers_detailed$score <- markers_detailed$pct.1 /
-      (markers_detailed$pct.2 + 0.01) * markers_detailed$avg_log2FC
-
-    saveRDS(markers_detailed,
-            file.path(output_dir, "Robjects", "markers_author_annotation_detailed.rds"))
-
-    marker_list_detailed <- split(markers_detailed, markers_detailed$cluster)
-    marker_list_detailed <- lapply(marker_list_detailed, function(x) {
-      x[order(x$score, decreasing = TRUE), ]
-    })
-
-    write.xlsx(marker_list_detailed,
-               file.path(output_dir, "Tables", "markers_author_annotation_detailed.xlsx"))
-    cat("  ✓ 已保存: markers_author_annotation_detailed.xlsx\n\n")
-  }
-
-  # 恢复默认 Idents
-  Idents(seurat_obj) <- seurat_obj$SCT_clusters
-
-  cat(strrep("=", 80), "\n")
-  cat("✓ Marker基因反推分析完成\n")
-  cat(strrep("=", 80), "\n\n")
-}
-```
-
-## 🔥 多模态 Marker 综合可视化
-
-```{r multimodal_marker_visualization, fig.width=16, fig.height=12}
-################################################################################
-##################### 🔥 多模态 Marker 综合可视化 ################################
-################################################################################
-
-if (has_author_annotation) {
-
-  cat("\n", strrep("=", 80), "\n")
-  cat("🎨 多模态 Marker 综合可视化\n")
-  cat(strrep("=", 80), "\n\n")
-
-  # 创建输出目录
-  dir.create(file.path(output_dir, "Plots", "Markers"),
-             showWarnings = FALSE, recursive = TRUE)
-
-  # ==================== 设置可视化参数 ====================
-  Idents(seurat_obj) <- seurat_obj$author_annotation
-  DefaultAssay(seurat_obj) <- "SCT"
-
-  # 获取 top markers
-  top_genes_for_plot <- markers_author_annotation %>%
-    group_by(cluster) %>%
-    slice_max(order_by = score, n = 3) %>%
-    pull(gene) %>%
-    unique()
-
-  # 只保留存在的基因
-  top_genes_for_plot <- intersect(top_genes_for_plot, rownames(seurat_obj))
-
-  # 结合预定义的发育阶段基因
-  genes_for_visualization <- unique(c(
-    top_genes_for_plot[1:min(20, length(top_genes_for_plot))],
-    genes_lineage,
-    genes_maturation
-  ))
-  genes_for_visualization <- intersect(genes_for_visualization, rownames(seurat_obj))
-
-  cat("【可视化基因】\n")
-  cat("  Top DEG markers:", length(top_genes_for_plot), "个\n")
-  cat("  总可视化基因:", length(genes_for_visualization), "个\n\n")
-
-  # ==================== 1. DotPlot ====================
-  cat("【1/4】生成 DotPlot...\n")
-
-  p_dotplot <- DotPlot(seurat_obj,
-                       features = genes_for_visualization,
-                       assay = "SCT") +
-    RotatedAxis() +
-    scale_colour_gradientn(colours = rev(RColorBrewer::brewer.pal(n = 11, name = "RdYlBu"))) +
-    labs(title = paste0("Marker Gene Expression - ", analysis_mode, " mode"),
-         subtitle = "Dot size = % expressing | Color = expression level",
-         x = "Marker Genes", y = "Cell Type") +
-    theme(axis.text.x = element_text(size = 9, angle = 45, hjust = 1),
-          axis.text.y = element_text(size = 10))
-
-  plot_and_save(p_dotplot, "multimodal_dotplot_author_annotation", "Markers",
-                width = max(14, length(genes_for_visualization) * 0.35), height = 10)
-
-  # ==================== 2. Heatmap ====================
-  cat("【2/4】生成 Heatmap...\n")
-
-  # ScaleData
-  seurat_obj <- ScaleData(seurat_obj,
-                          features = genes_for_visualization,
-                          verbose = FALSE)
-
-  p_heatmap <- DoHeatmap(seurat_obj,
-                         features = genes_for_visualization,
-                         assay = "SCT",
-                         group.by = "author_annotation") +
-    scale_fill_gradientn(colors = c("blue", "white", "red")) +
-    labs(title = paste0("Marker Heatmap - ", analysis_mode, " mode")) +
-    theme(axis.text.y = element_text(size = 8))
-
-  plot_and_save(p_heatmap, "multimodal_heatmap_author_annotation", "Markers",
-                width = 14, height = max(10, length(genes_for_visualization) * 0.25))
-
-  # ==================== 3. FeaturePlot (关键发育阶段基因) ====================
-  cat("【3/4】生成 FeaturePlot...\n")
-
-  # 选择关键基因
-  key_genes <- c()
-  for (stage_name in names(genes_stages)) {
-    stage_genes <- genes_stages[[stage_name]]
-    available_genes <- intersect(stage_genes, rownames(seurat_obj))
-    if (length(available_genes) > 0) {
-      key_genes <- c(key_genes, available_genes[1])  # 每个阶段取第一个
-    }
-  }
-  key_genes <- unique(key_genes)[1:min(9, length(unique(key_genes)))]
-
-  if (length(key_genes) > 0) {
-    p_feature <- FeaturePlot(seurat_obj,
-                             features = key_genes,
-                             reduction = "umap",
-                             ncol = 3,
-                             pt.size = 0.5,
-                             cols = c("lightgrey", "blue")) +
-      plot_annotation(title = paste0("Key Stage Markers - ", analysis_mode, " mode"),
-                     subtitle = "Expression level shown as color intensity")
-
-    plot_and_save(p_feature, "multimodal_featureplot_stage_markers", "Markers",
-                  width = 14, height = ceiling(length(key_genes) / 3) * 4)
-  }
-
-  # ==================== 4. VlnPlot (发育阶段标志基因) ====================
-  cat("【4/4】生成 VlnPlot...\n")
-
-  vln_genes <- key_genes[1:min(6, length(key_genes))]
-
-  if (length(vln_genes) > 0) {
-    p_vln <- VlnPlot(seurat_obj,
-                     features = vln_genes,
-                     group.by = "author_annotation",
-                     pt.size = 0,
-                     ncol = 3) +
-      plot_annotation(title = paste0("Stage Marker Expression - ", analysis_mode, " mode"))
-
-    plot_and_save(p_vln, "multimodal_vlnplot_stage_markers", "Markers",
-                  width = 16, height = ceiling(length(vln_genes) / 3) * 4)
-  }
-
-  # 恢复默认
-  Idents(seurat_obj) <- seurat_obj$SCT_clusters
-
-  cat("\n✓ 多模态可视化完成\n\n")
-}
-```
-
----
-
-# 🔥 下游分析准备
-
-> **为拟时序分析（Monocle3/Slingshot）、CellOracle、scTenifoldKnk 等做准备**
-
-## 导出分析就绪的对象
-
-```{r export_for_downstream, fig.width=12, fig.height=8}
-################################################################################
-##################### 🔥 导出下游分析所需数据 ####################################
-################################################################################
-
-cat("\n", strrep("=", 80), "\n")
-cat("📦 准备下游分析所需数据\n")
-cat(strrep("=", 80), "\n\n")
-
-# ==================== 1. 保存带注释的 Seurat 对象 ====================
-cat("【1/5】保存带注释的 Seurat 对象...\n")
-
-# 设置最终的 Idents（使用作者注释）
-if (has_author_annotation) {
-  Idents(seurat_obj) <- seurat_obj$author_annotation
-  cat("  设置 Idents 为 author_annotation\n")
-} else {
-  Idents(seurat_obj) <- seurat_obj$SCT_clusters
-  cat("  设置 Idents 为 SCT_clusters（无作者注释）\n")
-}
-
-# 保存完整对象
-saveRDS(seurat_obj, file.path(output_dir, "Robjects", "seurat_obj_annotated.rds"))
-cat("  ✓ seurat_obj_annotated.rds 已保存\n\n")
-
-# ==================== 2. 为 Monocle3 准备数据 ====================
-cat("【2/5】为 Monocle3 拟时序分析准备数据...\n")
-
-monocle3_data <- list(
-  # 表达矩阵
-  counts = GetAssayData(seurat_obj, slot = "counts", assay = "RNA"),
-  normalized = GetAssayData(seurat_obj, slot = "data", assay = "SCT"),
-
-  # 元数据
-  metadata = seurat_obj@meta.data,
-
-  # 降维结果
-  umap = Embeddings(seurat_obj, "umap"),
-
-  # 注释信息
-  cell_type = if(has_author_annotation) seurat_obj$author_annotation else seurat_obj$SCT_clusters,
-
-  # 分析模式
-  analysis_mode = analysis_mode
-)
-
-# 如果有 PCA 结果
-if ("pca" %in% names(seurat_obj@reductions)) {
-  monocle3_data$pca <- Embeddings(seurat_obj, "pca")
-}
-
-saveRDS(monocle3_data, file.path(output_dir, "Robjects", "data_for_monocle3.rds"))
-cat("  ✓ data_for_monocle3.rds 已保存\n")
-cat("  包含: counts, normalized, metadata, umap, cell_type, pca\n\n")
-
-# ==================== 3. 为 CellOracle 准备数据 ====================
-cat("【3/5】为 CellOracle 基因调控网络分析准备数据...\n")
-
-celloracle_data <- list(
-  # 归一化表达矩阵（CellOracle 需要）
-  expression_matrix = as.matrix(GetAssayData(seurat_obj, slot = "data", assay = "SCT")),
-
-  # 元数据
-  metadata = seurat_obj@meta.data,
-
-  # UMAP 坐标
-  umap_coords = as.data.frame(Embeddings(seurat_obj, "umap")),
-
-  # 细胞类型
-  cell_type = if(has_author_annotation) as.character(seurat_obj$author_annotation) else as.character(seurat_obj$SCT_clusters),
-
-  # 高变基因（用于 GRN 构建）
-  variable_genes = VariableFeatures(seurat_obj),
-
-  # 分析模式
-  analysis_mode = analysis_mode
-)
-
-saveRDS(celloracle_data, file.path(output_dir, "Robjects", "data_for_celloracle.rds"))
-cat("  ✓ data_for_celloracle.rds 已保存\n")
-cat("  包含: expression_matrix, metadata, umap_coords, cell_type, variable_genes\n\n")
-
-# ==================== 4. 为 scTenifoldKnk 准备数据 ====================
-cat("【4/5】为 scTenifoldKnk 基因敲除模拟准备数据...\n")
-
-sctenifold_data <- list(
-  # 原始计数矩阵
-  counts = as.matrix(GetAssayData(seurat_obj, slot = "counts", assay = "RNA")),
-
-  # 元数据
-  metadata = seurat_obj@meta.data,
-
-  # 细胞类型
-  cell_type = if(has_author_annotation) as.character(seurat_obj$author_annotation) else as.character(seurat_obj$SCT_clusters),
-
-  # 分析模式
-  analysis_mode = analysis_mode
-)
-
-saveRDS(sctenifold_data, file.path(output_dir, "Robjects", "data_for_sctenifoldknk.rds"))
-cat("  ✓ data_for_sctenifoldknk.rds 已保存\n")
-cat("  包含: counts, metadata, cell_type\n\n")
-
-# ==================== 5. 导出 CSV/TSV 格式（通用）====================
-cat("【5/5】导出通用格式数据...\n")
-
-# 元数据 CSV
-write.csv(seurat_obj@meta.data,
-          file.path(output_dir, "Tables", "cell_metadata.csv"),
-          row.names = TRUE)
-cat("  ✓ cell_metadata.csv 已保存\n")
-
-# UMAP 坐标
-umap_df <- as.data.frame(Embeddings(seurat_obj, "umap"))
-umap_df$cell_id <- rownames(umap_df)
-if (has_author_annotation) {
-  umap_df$cell_type <- seurat_obj$author_annotation
-}
-umap_df$cluster <- seurat_obj$SCT_clusters
-
-write.csv(umap_df,
-          file.path(output_dir, "Tables", "umap_coordinates.csv"),
-          row.names = FALSE)
-cat("  ✓ umap_coordinates.csv 已保存\n")
-
-# 基因列表（用于参考）
-gene_lists <- list(
-  cDC1_stages = genes_cDC1_stages,
-  cDC2_stages = genes_cDC2_stages,
-  lineage_markers = list(cDC1 = genes_cDC1, cDC2 = genes_cDC2),
-  functional = list(maturation = genes_maturation,
-                    migration = genes_migration,
-                    functional = genes_functional)
-)
-
-saveRDS(gene_lists, file.path(output_dir, "Robjects", "gene_lists_reference.rds"))
-cat("  ✓ gene_lists_reference.rds 已保存\n\n")
-
-cat(strrep("=", 80), "\n")
-cat("✓ 下游分析数据准备完成\n")
-cat(strrep("=", 80), "\n\n")
-```
-
-## 下游分析使用指南
-
-```{r downstream_guide, results='asis'}
-cat("
-## 📚 下游分析使用指南
-
-### 1. Monocle3 拟时序分析
-
-```r
-# 加载数据
-monocle3_data <- readRDS('", file.path(output_dir, "Robjects", "data_for_monocle3.rds"), "')
-
-# 创建 CellDataSet
-library(monocle3)
-cds <- new_cell_data_set(
-  expression_data = monocle3_data$counts,
-  cell_metadata = monocle3_data$metadata
-)
-
-# 使用已有的 UMAP
-reducedDims(cds)$UMAP <- monocle3_data$umap
-
-# 学习轨迹
-cds <- learn_graph(cds)
-cds <- order_cells(cds)
-
-# 可视化
-plot_cells(cds, color_cells_by = 'pseudotime')
-```
-
-### 2. CellOracle 基因调控网络
-
-```python
-# Python 代码
-import celloracle as co
-import scanpy as sc
-
-# 加载数据（需要先转换为 h5ad 格式）
-adata = sc.read_h5ad('path/to/adata.h5ad')
-
-# 构建 GRN
-oracle = co.Oracle()
-oracle.import_anndata_as_raw_count(adata)
-oracle.perform_PCA()
-oracle.knn_imputation()
-
-# 预测 TF 活性
-oracle.fit_GRN_for_simulation()
-```
-
-### 3. scTenifoldKnk 基因敲除模拟
-
-```r
-# 加载数据
-sctenifold_data <- readRDS('", file.path(output_dir, "Robjects", "data_for_sctenifoldknk.rds"), "')
-
-# 运行 scTenifoldKnk
-library(scTenifoldKnk)
-result <- scTenifoldKnk(
-  X = sctenifold_data$counts,
-  geneKO = 'YOUR_GENE_OF_INTEREST'
-)
-
-# 查看结果
-head(result$diffRegulation)
-```
-
-", sep = "")
-```
-
----
-
 # QC可视化（基础保留）
 
 ## UMI分布
@@ -2101,6 +1326,915 @@ if ("adt_umap" %in% reductions_available) {
 
   cat("  ✓ 已生成", length(adt_clusters), "个ADT cluster高亮图\n\n")
 }
+```
+
+---
+
+# 🔥 作者注释导入与分析
+
+> **本节核心功能**：
+> 1. 导入作者的原始细胞类型注释（两版：详细版和最终版）
+> 2. 对比您的聚类结果与作者注释的关系
+> 3. 反推作者注释时依赖的差异基因
+> 4. 为后续拟时序分析做准备
+
+## 导入作者注释
+
+```{r import_author_annotation}
+################################################################################
+##################### 🔥 导入作者原始注释 ######################################
+################################################################################
+
+cat("
+", strrep("=", 80), "
+")
+cat("🔥 导入作者原始注释
+")
+cat(strrep("=", 80), "
+
+")
+
+# ==================== 加载包含原始注释的 metadata ====================
+# metadata_original 存储在 CITE-seq_Complete_Analysis_v3.Rmd 生成的缓存文件中
+# 文件名格式：{mode}_01_subset_extracted.rds（如 cDC1_01_subset_extracted.rds）
+
+# 构建缓存文件路径（缓存文件在 results/Cache/ 目录）
+v3_cache_dir <- file.path(v3_output_dir, "Cache")
+
+if (analysis_mode == "integrated") {
+  subset_cache_file <- file.path(v3_cache_dir, "integrated_01_subset_extracted.rds")
+} else {
+  subset_cache_file <- file.path(v3_cache_dir, paste0(analysis_mode, "_01_subset_extracted.rds"))
+}
+
+cat("📂 查找缓存文件:
+")
+cat("  路径:", subset_cache_file, "
+
+")
+
+# 尝试从缓存文件加载 metadata_original
+metadata_original <- NULL
+
+if (file.exists(subset_cache_file)) {
+  cat("  ✅ 找到缓存文件，正在加载...
+")
+  subset_data <- readRDS(subset_cache_file)
+
+  if ("metadata" %in% names(subset_data)) {
+    metadata_original <- subset_data$metadata
+    cat("  ✅ 已从缓存文件提取 metadata_original
+")
+    cat("  细胞数:", nrow(metadata_original), "
+")
+    cat("  列数:", ncol(metadata_original), "
+
+")
+
+    # 显示可用的注释列
+    annotation_cols <- intersect(
+      c("Annotation", "Annotation_detailed", "final_annotation2021",
+        "annotated_clusters", "minimalist_annotation", "original_cluster"),
+      colnames(metadata_original)
+    )
+
+    if (length(annotation_cols) > 0) {
+      cat("  🎯 发现以下注释列:
+")
+      for (col in annotation_cols) {
+        cat("    -", col, ":", length(unique(metadata_original[[col]])), "种类型
+")
+      }
+      cat("
+")
+    }
+  } else {
+    cat("  ⚠️ 缓存文件中未找到 metadata 字段
+
+")
+  }
+
+  # 清理临时变量
+  rm(subset_data)
+  gc()
+
+} else {
+  cat("  ⚠️ 未找到缓存文件:", subset_cache_file, "
+")
+  cat("  尝试从 Seurat 对象中提取原始注释...
+
+")
+
+  # 检查 seurat_obj 中是否已有作者注释
+  available_annotations <- intersect(
+    c("Annotation", "Annotation_detailed", "final_annotation2021",
+      "annotated_clusters", "minimalist_annotation"),
+    colnames(seurat_obj@meta.data)
+  )
+
+  if (length(available_annotations) > 0) {
+    cat("  ✅ 在 Seurat 对象中找到以下注释列:
+")
+    cat("    ", paste(available_annotations, collapse = ", "), "
+
+")
+    metadata_original <- seurat_obj@meta.data
+  } else {
+    cat("  ❌ 未找到作者注释
+")
+    cat("  请确保已运行 CITE-seq_Complete_Analysis_v3.Rmd 的 Section 2.2
+
+")
+  }
+}
+
+# ==================== 添加作者注释到 Seurat 对象 ====================
+if (!is.null(metadata_original)) {
+
+  # 确保细胞顺序一致
+  common_cells <- intersect(rownames(seurat_obj@meta.data), rownames(metadata_original))
+  cat("  共有细胞数:", length(common_cells), "/", ncol(seurat_obj), "
+
+")
+
+  # ---------- 添加 final_annotation2021（最终版注释）----------
+  if ("final_annotation2021" %in% colnames(metadata_original)) {
+    seurat_obj$author_annotation <- metadata_original[common_cells, "final_annotation2021"]
+    cat("  ✅ 已添加 author_annotation (final_annotation2021)
+")
+    cat("     细胞类型分布:
+")
+    print(table(seurat_obj$author_annotation))
+    cat("
+")
+  } else if ("Annotation" %in% colnames(metadata_original)) {
+    seurat_obj$author_annotation <- metadata_original[common_cells, "Annotation"]
+    cat("  ✅ 已添加 author_annotation (Annotation)
+")
+    cat("     细胞类型分布:
+")
+    print(table(seurat_obj$author_annotation))
+    cat("
+")
+  }
+
+  # ---------- 添加 Annotation_detailed（详细版注释）----------
+  if ("Annotation_detailed" %in% colnames(metadata_original)) {
+    seurat_obj$author_annotation_detailed <- metadata_original[common_cells, "Annotation_detailed"]
+    cat("  ✅ 已添加 author_annotation_detailed (Annotation_detailed)
+")
+    cat("     细胞类型分布:
+")
+    print(table(seurat_obj$author_annotation_detailed))
+    cat("
+")
+  } else if ("annotated_clusters" %in% colnames(metadata_original)) {
+    seurat_obj$author_annotation_detailed <- metadata_original[common_cells, "annotated_clusters"]
+    cat("  ✅ 已添加 author_annotation_detailed (annotated_clusters)
+")
+    cat("     细胞类型分布:
+")
+    print(table(seurat_obj$author_annotation_detailed))
+    cat("
+")
+  }
+
+  # ---------- 对于 integrated 模式，添加 subset 信息 ----------
+  if (analysis_mode == "integrated") {
+    if ("subset" %in% colnames(metadata_original)) {
+      seurat_obj$subset <- metadata_original[common_cells, "subset"]
+      cat("  ✅ 已添加 subset (cDC1/cDC2 来源)
+")
+      print(table(seurat_obj$subset))
+      cat("
+")
+    }
+    if ("original_cluster" %in% colnames(metadata_original)) {
+      seurat_obj$original_cluster <- metadata_original[common_cells, "original_cluster"]
+      cat("  ✅ 已添加 original_cluster
+
+")
+    }
+  }
+
+  has_author_annotation <- "author_annotation" %in% colnames(seurat_obj@meta.data)
+  has_detailed_annotation <- "author_annotation_detailed" %in% colnames(seurat_obj@meta.data)
+
+} else {
+  has_author_annotation <- FALSE
+  has_detailed_annotation <- FALSE
+}
+
+cat(strrep("=", 80), "
+
+")
+```
+
+## 可视化作者注释
+
+```{r visualize_author_annotation, fig.width=16, fig.height=8}
+################################################################################
+##################### 可视化作者注释 ############################################
+################################################################################
+
+if (has_author_annotation) {
+
+  cat("📊 可视化作者注释...
+
+")
+
+  # 创建输出目录
+  dir.create(file.path(output_dir, "Plots", "Annotation"),
+             showWarnings = FALSE, recursive = TRUE)
+
+  # ==================== 最终版注释 UMAP ====================
+  p_annot_umap <- DimPlot(seurat_obj, reduction = "umap",
+                          group.by = "author_annotation",
+                          label = TRUE, repel = TRUE, label.size = 4) +
+    labs(title = paste0("Author Annotation (", analysis_mode, " mode)"),
+         subtitle = paste0(length(unique(seurat_obj$author_annotation)), " cell types")) +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  plot_and_save(p_annot_umap, "author_annotation_umap", "Annotation",
+                width = 12, height = 10)
+
+  # ==================== 详细版注释 UMAP ====================
+  if (has_detailed_annotation) {
+    p_annot_detailed <- DimPlot(seurat_obj, reduction = "umap",
+                                group.by = "author_annotation_detailed",
+                                label = TRUE, repel = TRUE, label.size = 3) +
+      labs(title = paste0("Author Annotation Detailed (", analysis_mode, " mode)"),
+           subtitle = "More granular cell type classification") +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+            legend.text = element_text(size = 8))
+
+    plot_and_save(p_annot_detailed, "author_annotation_detailed_umap", "Annotation",
+                  width = 14, height = 10)
+  }
+
+  # ==================== 对比图：您的聚类 vs 作者注释 ====================
+  p_compare1 <- DimPlot(seurat_obj, reduction = "umap",
+                        group.by = "SCT_clusters",
+                        label = TRUE, repel = TRUE, label.size = 4) +
+    labs(title = "Your Clustering (SCT_clusters)") +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  p_compare2 <- DimPlot(seurat_obj, reduction = "umap",
+                        group.by = "author_annotation",
+                        label = TRUE, repel = TRUE, label.size = 4) +
+    labs(title = "Author Annotation") +
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  p_compare <- p_compare1 | p_compare2
+  p_compare <- p_compare + plot_annotation(
+    title = "Comparison: Your Clustering vs Author Annotation",
+    theme = theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+  )
+
+  plot_and_save(p_compare, "clustering_vs_annotation_comparison", "Annotation",
+                width = 20, height = 9)
+
+  cat("✓ 作者注释可视化完成
+
+")
+}
+```
+
+## 聚类与作者注释对应关系分析
+
+```{r cluster_annotation_correspondence, fig.width=14, fig.height=10}
+################################################################################
+##################### 聚类与作者注释对应关系 ####################################
+################################################################################
+
+if (has_author_annotation) {
+
+  cat("
+", strrep("=", 80), "
+")
+  cat("🔍 分析聚类与作者注释的对应关系
+")
+  cat(strrep("=", 80), "
+
+")
+
+  # ==================== 创建对应关系表 ====================
+  correspondence_table <- table(seurat_obj$SCT_clusters, seurat_obj$author_annotation)
+
+  cat("【聚类-注释对应表】
+")
+  print(correspondence_table)
+  cat("
+")
+
+  # 保存对应关系表
+  correspondence_df <- as.data.frame.matrix(correspondence_table)
+  correspondence_df$Cluster <- rownames(correspondence_df)
+  correspondence_df <- correspondence_df[, c("Cluster", setdiff(names(correspondence_df), "Cluster"))]
+
+  write.xlsx(correspondence_df,
+             file.path(output_dir, "Tables", "cluster_annotation_correspondence.xlsx"))
+  cat("✓ 对应关系表已保存: cluster_annotation_correspondence.xlsx
+
+")
+
+  # ==================== 计算每个 cluster 的主要注释 ====================
+  cluster_dominant_annotation <- apply(correspondence_table, 1, function(x) {
+    names(which.max(x))
+  })
+
+  cluster_purity <- apply(correspondence_table, 1, function(x) {
+    round(max(x) / sum(x) * 100, 1)
+  })
+
+  cluster_summary <- data.frame(
+    Cluster = names(cluster_dominant_annotation),
+    Dominant_Annotation = cluster_dominant_annotation,
+    Purity_Percent = cluster_purity,
+    Total_Cells = rowSums(correspondence_table)
+  )
+
+  cat("【每个Cluster的主要注释】
+")
+  print(cluster_summary)
+  cat("
+")
+
+  write.xlsx(cluster_summary,
+             file.path(output_dir, "Tables", "cluster_dominant_annotation.xlsx"))
+
+  # ==================== 可视化：热图 ====================
+  # 转换为比例
+  correspondence_prop <- prop.table(correspondence_table, margin = 1) * 100
+
+  # 使用 pheatmap 或 ggplot2 绑定
+  library(reshape2)
+  heatmap_data <- melt(as.matrix(correspondence_prop))
+  colnames(heatmap_data) <- c("Cluster", "Annotation", "Percentage")
+
+  p_heatmap <- ggplot(heatmap_data, aes(x = Annotation, y = factor(Cluster), fill = Percentage)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = ifelse(Percentage > 5, round(Percentage, 0), "")),
+              size = 3, color = "black") +
+    scale_fill_gradientn(colors = c("white", "lightyellow", "orange", "red", "darkred"),
+                         values = c(0, 0.1, 0.3, 0.6, 1),
+                         name = "Percentage (%)") +
+    labs(title = "Cluster Composition by Author Annotation",
+         subtitle = "Numbers show percentage of cells in each cluster",
+         x = "Author Annotation", y = "Your Cluster") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+          axis.text.y = element_text(size = 10),
+          plot.title = element_text(hjust = 0.5, face = "bold"))
+
+  plot_and_save(p_heatmap, "cluster_annotation_heatmap", "Annotation",
+                width = max(10, length(unique(seurat_obj$author_annotation)) * 0.8),
+                height = max(8, length(unique(seurat_obj$SCT_clusters)) * 0.5))
+
+  # ==================== Sankey/Alluvial 图（可选）====================
+  # 使用条形图展示对应关系
+  p_bar <- ggplot(heatmap_data, aes(x = factor(Cluster), y = Percentage, fill = Annotation)) +
+    geom_bar(stat = "identity", position = "stack") +
+    labs(title = "Cluster Composition",
+         subtitle = "Stacked bar showing annotation composition per cluster",
+         x = "Your Cluster", y = "Percentage (%)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 0, size = 10),
+          plot.title = element_text(hjust = 0.5, face = "bold"),
+          legend.position = "right")
+
+  plot_and_save(p_bar, "cluster_composition_barplot", "Annotation",
+                width = 14, height = 8)
+
+  cat("✓ 对应关系分析完成
+
+")
+}
+```
+
+## 🔥 反推作者注释依赖的基因（FindAllMarkers）
+
+```{r find_annotation_markers, fig.width=16, fig.height=12}
+################################################################################
+##################### 🔥 反推作者注释依赖的基因 ##################################
+################################################################################
+
+if (has_author_annotation) {
+
+  cat("
+", strrep("=", 80), "
+")
+  cat("🔥 反推作者注释依赖的Marker基因
+")
+  cat(strrep("=", 80), "
+
+")
+
+  cat("【目的】
+")
+  cat("  使用作者的注释作为分组依据，运行 FindAllMarkers
+")
+  cat("  得到的差异基因就是区分各细胞类型的关键marker
+
+")
+
+  # ==================== 基于作者最终注释的 FindAllMarkers ====================
+  cat("【1/2】分析最终版注释 (author_annotation) 的markers...
+")
+
+  Idents(seurat_obj) <- seurat_obj$author_annotation
+
+  markers_author_annotation <- FindAllMarkers(
+    seurat_obj,
+    assay = "SCT",
+    only.pos = TRUE,
+    min.pct = 0.25,
+    logfc.threshold = 0.25,
+    verbose = FALSE
+  )
+
+  cat("  发现", nrow(markers_author_annotation), "个marker基因
+")
+
+  # 计算 score
+  markers_author_annotation$score <- markers_author_annotation$pct.1 /
+    (markers_author_annotation$pct.2 + 0.01) * markers_author_annotation$avg_log2FC
+
+  # 保存 RDS
+  saveRDS(markers_author_annotation,
+          file.path(output_dir, "Robjects", "markers_author_annotation.rds"))
+
+  # 按细胞类型整理并保存 Excel
+  marker_list <- split(markers_author_annotation, markers_author_annotation$cluster)
+  marker_list <- lapply(marker_list, function(x) {
+    x[order(x$score, decreasing = TRUE), ]
+  })
+
+  write.xlsx(marker_list,
+             file.path(output_dir, "Tables", "markers_author_annotation.xlsx"))
+  cat("  ✓ 已保存: markers_author_annotation.xlsx
+
+")
+
+  # ==================== 显示每个细胞类型的 Top Markers ====================
+  top_markers_author <- markers_author_annotation %>%
+    group_by(cluster) %>%
+    slice_max(order_by = score, n = 5) %>%
+    select(cluster, gene, avg_log2FC, pct.1, pct.2, score)
+
+  cat("【各细胞类型 Top 5 Markers】
+")
+  print(as.data.frame(top_markers_author))
+  cat("
+")
+
+  # ==================== 基于详细版注释的 FindAllMarkers（可选）====================
+  if (has_detailed_annotation) {
+    cat("【2/2】分析详细版注释 (author_annotation_detailed) 的markers...
+")
+
+    Idents(seurat_obj) <- seurat_obj$author_annotation_detailed
+
+    markers_detailed <- FindAllMarkers(
+      seurat_obj,
+      assay = "SCT",
+      only.pos = TRUE,
+      min.pct = 0.25,
+      logfc.threshold = 0.25,
+      verbose = FALSE
+    )
+
+    cat("  发现", nrow(markers_detailed), "个marker基因
+")
+
+    markers_detailed$score <- markers_detailed$pct.1 /
+      (markers_detailed$pct.2 + 0.01) * markers_detailed$avg_log2FC
+
+    saveRDS(markers_detailed,
+            file.path(output_dir, "Robjects", "markers_author_annotation_detailed.rds"))
+
+    marker_list_detailed <- split(markers_detailed, markers_detailed$cluster)
+    marker_list_detailed <- lapply(marker_list_detailed, function(x) {
+      x[order(x$score, decreasing = TRUE), ]
+    })
+
+    write.xlsx(marker_list_detailed,
+               file.path(output_dir, "Tables", "markers_author_annotation_detailed.xlsx"))
+    cat("  ✓ 已保存: markers_author_annotation_detailed.xlsx
+
+")
+  }
+
+  # 恢复默认 Idents
+  Idents(seurat_obj) <- seurat_obj$SCT_clusters
+
+  cat(strrep("=", 80), "
+")
+  cat("✓ Marker基因反推分析完成
+")
+  cat(strrep("=", 80), "
+
+")
+}
+```
+
+## 🔥 多模态 Marker 综合可视化
+
+```{r multimodal_marker_visualization, fig.width=16, fig.height=12}
+################################################################################
+##################### 🔥 多模态 Marker 综合可视化 ################################
+################################################################################
+
+if (has_author_annotation) {
+
+  cat("
+", strrep("=", 80), "
+")
+  cat("🎨 多模态 Marker 综合可视化
+")
+  cat(strrep("=", 80), "
+
+")
+
+  # 创建输出目录
+  dir.create(file.path(output_dir, "Plots", "Markers"),
+             showWarnings = FALSE, recursive = TRUE)
+
+  # ==================== 设置可视化参数 ====================
+  Idents(seurat_obj) <- seurat_obj$author_annotation
+  DefaultAssay(seurat_obj) <- "SCT"
+
+  # 获取 top markers
+  top_genes_for_plot <- markers_author_annotation %>%
+    group_by(cluster) %>%
+    slice_max(order_by = score, n = 3) %>%
+    pull(gene) %>%
+    unique()
+
+  # 只保留存在的基因
+  top_genes_for_plot <- intersect(top_genes_for_plot, rownames(seurat_obj))
+
+  # 结合预定义的发育阶段基因
+  genes_for_visualization <- unique(c(
+    top_genes_for_plot[1:min(20, length(top_genes_for_plot))],
+    genes_lineage,
+    genes_maturation
+  ))
+  genes_for_visualization <- intersect(genes_for_visualization, rownames(seurat_obj))
+
+  cat("【可视化基因】
+")
+  cat("  Top DEG markers:", length(top_genes_for_plot), "个
+")
+  cat("  总可视化基因:", length(genes_for_visualization), "个
+
+")
+
+  # ==================== 1. DotPlot ====================
+  cat("【1/4】生成 DotPlot...
+")
+
+  p_dotplot <- DotPlot(seurat_obj,
+                       features = genes_for_visualization,
+                       assay = "SCT") +
+    RotatedAxis() +
+    scale_colour_gradientn(colours = rev(RColorBrewer::brewer.pal(n = 11, name = "RdYlBu"))) +
+    labs(title = paste0("Marker Gene Expression - ", analysis_mode, " mode"),
+         subtitle = "Dot size = % expressing | Color = expression level",
+         x = "Marker Genes", y = "Cell Type") +
+    theme(axis.text.x = element_text(size = 9, angle = 45, hjust = 1),
+          axis.text.y = element_text(size = 10))
+
+  plot_and_save(p_dotplot, "multimodal_dotplot_author_annotation", "Markers",
+                width = max(14, length(genes_for_visualization) * 0.35), height = 10)
+
+  # ==================== 2. Heatmap ====================
+  cat("【2/4】生成 Heatmap...
+")
+
+  # ScaleData
+  seurat_obj <- ScaleData(seurat_obj,
+                          features = genes_for_visualization,
+                          verbose = FALSE)
+
+  p_heatmap <- DoHeatmap(seurat_obj,
+                         features = genes_for_visualization,
+                         assay = "SCT",
+                         group.by = "author_annotation") +
+    scale_fill_gradientn(colors = c("blue", "white", "red")) +
+    labs(title = paste0("Marker Heatmap - ", analysis_mode, " mode")) +
+    theme(axis.text.y = element_text(size = 8))
+
+  plot_and_save(p_heatmap, "multimodal_heatmap_author_annotation", "Markers",
+                width = 14, height = max(10, length(genes_for_visualization) * 0.25))
+
+  # ==================== 3. FeaturePlot (关键发育阶段基因) ====================
+  cat("【3/4】生成 FeaturePlot...
+")
+
+  # 选择关键基因
+  key_genes <- c()
+  for (stage_name in names(genes_stages)) {
+    stage_genes <- genes_stages[[stage_name]]
+    available_genes <- intersect(stage_genes, rownames(seurat_obj))
+    if (length(available_genes) > 0) {
+      key_genes <- c(key_genes, available_genes[1])  # 每个阶段取第一个
+    }
+  }
+  key_genes <- unique(key_genes)[1:min(9, length(unique(key_genes)))]
+
+  if (length(key_genes) > 0) {
+    p_feature <- FeaturePlot(seurat_obj,
+                             features = key_genes,
+                             reduction = "umap",
+                             ncol = 3,
+                             pt.size = 0.5,
+                             cols = c("lightgrey", "blue")) +
+      plot_annotation(title = paste0("Key Stage Markers - ", analysis_mode, " mode"),
+                     subtitle = "Expression level shown as color intensity")
+
+    plot_and_save(p_feature, "multimodal_featureplot_stage_markers", "Markers",
+                  width = 14, height = ceiling(length(key_genes) / 3) * 4)
+  }
+
+  # ==================== 4. VlnPlot (发育阶段标志基因) ====================
+  cat("【4/4】生成 VlnPlot...
+")
+
+  vln_genes <- key_genes[1:min(6, length(key_genes))]
+
+  if (length(vln_genes) > 0) {
+    p_vln <- VlnPlot(seurat_obj,
+                     features = vln_genes,
+                     group.by = "author_annotation",
+                     pt.size = 0,
+                     ncol = 3) +
+      plot_annotation(title = paste0("Stage Marker Expression - ", analysis_mode, " mode"))
+
+    plot_and_save(p_vln, "multimodal_vlnplot_stage_markers", "Markers",
+                  width = 16, height = ceiling(length(vln_genes) / 3) * 4)
+  }
+
+  # 恢复默认
+  Idents(seurat_obj) <- seurat_obj$SCT_clusters
+
+  cat("
+✓ 多模态可视化完成
+
+")
+}
+```
+
+---
+
+# 🔥 下游分析准备
+
+> **为拟时序分析（Monocle3/Slingshot）、CellOracle、scTenifoldKnk 等做准备**
+
+## 导出分析就绪的对象
+
+```{r export_for_downstream, fig.width=12, fig.height=8}
+################################################################################
+##################### 🔥 导出下游分析所需数据 ####################################
+################################################################################
+
+cat("
+", strrep("=", 80), "
+")
+cat("📦 准备下游分析所需数据
+")
+cat(strrep("=", 80), "
+
+")
+
+# ==================== 1. 保存带注释的 Seurat 对象 ====================
+cat("【1/5】保存带注释的 Seurat 对象...
+")
+
+# 设置最终的 Idents（使用作者注释）
+if (has_author_annotation) {
+  Idents(seurat_obj) <- seurat_obj$author_annotation
+  cat("  设置 Idents 为 author_annotation
+")
+} else {
+  Idents(seurat_obj) <- seurat_obj$SCT_clusters
+  cat("  设置 Idents 为 SCT_clusters（无作者注释）
+")
+}
+
+# 保存完整对象
+saveRDS(seurat_obj, file.path(output_dir, "Robjects", "seurat_obj_annotated.rds"))
+cat("  ✓ seurat_obj_annotated.rds 已保存
+
+")
+
+# ==================== 2. 为 Monocle3 准备数据 ====================
+cat("【2/5】为 Monocle3 拟时序分析准备数据...
+")
+
+monocle3_data <- list(
+  # 表达矩阵
+  counts = GetAssayData(seurat_obj, slot = "counts", assay = "RNA"),
+  normalized = GetAssayData(seurat_obj, slot = "data", assay = "SCT"),
+
+  # 元数据
+  metadata = seurat_obj@meta.data,
+
+  # 降维结果
+  umap = Embeddings(seurat_obj, "umap"),
+
+  # 注释信息
+  cell_type = if(has_author_annotation) seurat_obj$author_annotation else seurat_obj$SCT_clusters,
+
+  # 分析模式
+  analysis_mode = analysis_mode
+)
+
+# 如果有 PCA 结果
+if ("pca" %in% names(seurat_obj@reductions)) {
+  monocle3_data$pca <- Embeddings(seurat_obj, "pca")
+}
+
+saveRDS(monocle3_data, file.path(output_dir, "Robjects", "data_for_monocle3.rds"))
+cat("  ✓ data_for_monocle3.rds 已保存
+")
+cat("  包含: counts, normalized, metadata, umap, cell_type, pca
+
+")
+
+# ==================== 3. 为 CellOracle 准备数据 ====================
+cat("【3/5】为 CellOracle 基因调控网络分析准备数据...
+")
+
+celloracle_data <- list(
+  # 归一化表达矩阵（CellOracle 需要）
+  expression_matrix = as.matrix(GetAssayData(seurat_obj, slot = "data", assay = "SCT")),
+
+  # 元数据
+  metadata = seurat_obj@meta.data,
+
+  # UMAP 坐标
+  umap_coords = as.data.frame(Embeddings(seurat_obj, "umap")),
+
+  # 细胞类型
+  cell_type = if(has_author_annotation) as.character(seurat_obj$author_annotation) else as.character(seurat_obj$SCT_clusters),
+
+  # 高变基因（用于 GRN 构建）
+  variable_genes = VariableFeatures(seurat_obj),
+
+  # 分析模式
+  analysis_mode = analysis_mode
+)
+
+saveRDS(celloracle_data, file.path(output_dir, "Robjects", "data_for_celloracle.rds"))
+cat("  ✓ data_for_celloracle.rds 已保存
+")
+cat("  包含: expression_matrix, metadata, umap_coords, cell_type, variable_genes
+
+")
+
+# ==================== 4. 为 scTenifoldKnk 准备数据 ====================
+cat("【4/5】为 scTenifoldKnk 基因敲除模拟准备数据...
+")
+
+sctenifold_data <- list(
+  # 原始计数矩阵
+  counts = as.matrix(GetAssayData(seurat_obj, slot = "counts", assay = "RNA")),
+
+  # 元数据
+  metadata = seurat_obj@meta.data,
+
+  # 细胞类型
+  cell_type = if(has_author_annotation) as.character(seurat_obj$author_annotation) else as.character(seurat_obj$SCT_clusters),
+
+  # 分析模式
+  analysis_mode = analysis_mode
+)
+
+saveRDS(sctenifold_data, file.path(output_dir, "Robjects", "data_for_sctenifoldknk.rds"))
+cat("  ✓ data_for_sctenifoldknk.rds 已保存
+")
+cat("  包含: counts, metadata, cell_type
+
+")
+
+# ==================== 5. 导出 CSV/TSV 格式（通用）====================
+cat("【5/5】导出通用格式数据...
+")
+
+# 元数据 CSV
+write.csv(seurat_obj@meta.data,
+          file.path(output_dir, "Tables", "cell_metadata.csv"),
+          row.names = TRUE)
+cat("  ✓ cell_metadata.csv 已保存
+")
+
+# UMAP 坐标
+umap_df <- as.data.frame(Embeddings(seurat_obj, "umap"))
+umap_df$cell_id <- rownames(umap_df)
+if (has_author_annotation) {
+  umap_df$cell_type <- seurat_obj$author_annotation
+}
+umap_df$cluster <- seurat_obj$SCT_clusters
+
+write.csv(umap_df,
+          file.path(output_dir, "Tables", "umap_coordinates.csv"),
+          row.names = FALSE)
+cat("  ✓ umap_coordinates.csv 已保存
+")
+
+# 基因列表（用于参考）
+gene_lists <- list(
+  cDC1_stages = genes_cDC1_stages,
+  cDC2_stages = genes_cDC2_stages,
+  lineage_markers = list(cDC1 = genes_cDC1, cDC2 = genes_cDC2),
+  functional = list(maturation = genes_maturation,
+                    migration = genes_migration,
+                    functional = genes_functional)
+)
+
+saveRDS(gene_lists, file.path(output_dir, "Robjects", "gene_lists_reference.rds"))
+cat("  ✓ gene_lists_reference.rds 已保存
+
+")
+
+cat(strrep("=", 80), "
+")
+cat("✓ 下游分析数据准备完成
+")
+cat(strrep("=", 80), "
+
+")
+```
+
+## 下游分析使用指南
+
+```{r downstream_guide, results='asis'}
+cat("
+## 📚 下游分析使用指南
+
+### 1. Monocle3 拟时序分析
+
+```r
+# 加载数据
+monocle3_data <- readRDS('", file.path(output_dir, "Robjects", "data_for_monocle3.rds"), "')
+
+# 创建 CellDataSet
+library(monocle3)
+cds <- new_cell_data_set(
+  expression_data = monocle3_data$counts,
+  cell_metadata = monocle3_data$metadata
+)
+
+# 使用已有的 UMAP
+reducedDims(cds)$UMAP <- monocle3_data$umap
+
+# 学习轨迹
+cds <- learn_graph(cds)
+cds <- order_cells(cds)
+
+# 可视化
+plot_cells(cds, color_cells_by = 'pseudotime')
+```
+
+### 2. CellOracle 基因调控网络
+
+```python
+# Python 代码
+import celloracle as co
+import scanpy as sc
+
+# 加载数据（需要先转换为 h5ad 格式）
+adata = sc.read_h5ad('path/to/adata.h5ad')
+
+# 构建 GRN
+oracle = co.Oracle()
+oracle.import_anndata_as_raw_count(adata)
+oracle.perform_PCA()
+oracle.knn_imputation()
+
+# 预测 TF 活性
+oracle.fit_GRN_for_simulation()
+```
+
+### 3. scTenifoldKnk 基因敲除模拟
+
+```r
+# 加载数据
+sctenifold_data <- readRDS('", file.path(output_dir, "Robjects", "data_for_sctenifoldknk.rds"), "')
+
+# 运行 scTenifoldKnk
+library(scTenifoldKnk)
+result <- scTenifoldKnk(
+  X = sctenifold_data$counts,
+  geneKO = 'YOUR_GENE_OF_INTEREST'
+)
+
+# 查看结果
+head(result$diffRegulation)
+```
+
+", sep = "")
 ```
 
 ---
