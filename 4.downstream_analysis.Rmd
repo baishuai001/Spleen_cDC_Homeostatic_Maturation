@@ -218,12 +218,13 @@ cat("  └─ Tables/\n\n")
 
 # ==================== 验证输入文件 ====================
 cat("🔍 检查输入文件...\n")
-if (file.exists(input_file_prewnn)) {
-  input_file <- input_file_prewnn
-  cat("  ✅ 找到 pre_wnn.rds:", input_file, "\n")
-} else if (file.exists(input_file_final)) {
+# ✅ 修改优先级：优先使用 final.rds（包含WNN UMAP）
+if (file.exists(input_file_final)) {
   input_file <- input_file_final
-  cat("  ⚠️  未找到 pre_wnn.rds，使用 final.rds:", input_file, "\n")
+  cat("  ✅ 找到 final.rds（包含WNN UMAP）:", input_file, "\n")
+} else if (file.exists(input_file_prewnn)) {
+  input_file <- input_file_prewnn
+  cat("  ⚠️  未找到 final.rds，使用 pre_wnn.rds（无WNN UMAP）:", input_file, "\n")
 } else {
   stop("❌ 找不到输入文件:\n",
        "   尝试1: ", input_file_prewnn, "\n",
