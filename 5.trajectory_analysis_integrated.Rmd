@@ -1,0 +1,1303 @@
+---
+title: "轨迹分析整合：Monocle3 + Slingshot 交叉验证"
+author: "GSE228544 CITE-seq Analysis Pipeline"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cosmo
+    code_folding: show
+    df_print: paged
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8,
+  dpi = 300
+)
+```
+
+# 脚本说明 {.tabset}
+
+## 概述
+
+本脚本整合 **Monocle3** 和 **Slingshot** 两种轨迹推断算法，通过交叉验证提高结果可靠性。
+
+### 为什么使用两种方法？
+
+| 方法 | 优势 | 适用场景 |
+|------|------|----------|
+| **Monocle3** | • 复杂拓扑结构<br>• 自动化程度高<br>• 图学习算法 | 复杂分支、环状结构 |
+| **Slingshot** | • 速度快<br>• 与Seurat无缝集成<br>• 主曲线算法 | 树状轨迹、简单分叉 |
+
+**交叉验证价值**：
+- ✅ 算法独立性 → 结果一致性高 = 轨迹robust
+- ✅ 互补优势 → 发现数据特征
+- ✅ 发表优势 → 两种方法验证更有说服力
+
+### 主要功能
+
+1. **Monocle3 轨迹分析**
+   - 图学习轨迹构建
+   - 自动伪时间推断
+   - 轨迹依赖基因识别
+
+2. **Slingshot 轨迹分析**
+   - 主曲线轨迹拟合
+   - 快速伪时间计算
+   - 多谱系支持
+
+3. **交叉验证**
+   - 伪时间相关性分析
+   - 轨迹一致性可视化
+   - 差异基因重叠分析
+
+4. **三种UMAP空间支持**
+   - RNA UMAP（基因表达）
+   - ADT UMAP（表面蛋白）
+   - WNN UMAP（整合，推荐）
+
+### 输入数据
+
+- 来源：`4.downstream_analysis.Rmd` 输出的 `data_for_monocle3.rds`
+- 包含：counts, normalized, metadata, umap, adt_umap, wnn_umap, cell_type, pca
+
+### 输出结果
+
+```
+trajectory_analysis_{mode}/
+├─ data/
+│  └─ data_for_monocle3.rds
+├─ Robjects/
+│  ├─ monocle3_cds.rds              # Monocle3对象
+│  ├─ slingshot_sds.rds             # Slingshot对象
+│  ├─ comparison_results.rds        # 对比结果
+│  └─ trajectory_genes_*.rds        # 差异基因
+├─ Plots/
+│  ├─ Monocle3/                     # Monocle3轨迹图
+│  ├─ Slingshot/                    # Slingshot轨迹图
+│  └─ Comparison/                   # 对比图
+│     ├─ pseudotime_correlation.png
+│     ├─ trajectory_overlay.png
+│     └─ gene_overlap_venn.png
+└─ Tables/
+   ├─ monocle3_pseudotime.csv
+   ├─ slingshot_pseudotime.csv
+   ├─ pseudotime_comparison.csv
+   ├─ monocle3_genes.csv
+   ├─ slingshot_genes.csv
+   └─ overlapping_genes.csv
+```
+
+## 技术对比
+
+### Monocle3 vs Slingshot
+
+| 特性 | Monocle3 | Slingshot |
+|------|----------|-----------|
+| 算法 | 图学习（Graph-based） | 主曲线 + MST |
+| 输入 | 完整表达矩阵 | 降维结果 + 聚类 |
+| 速度 | 较慢 | 快 ⚡ |
+| 分支检测 | 自动 | 需要指定 |
+| 伪时间 | 图距离 | 曲线弧长 |
+| 复杂度 | 处理复杂拓扑 | 简单高效 |
+
+### 分析流程
+
+```
+输入数据 (data_for_monocle3.rds)
+    ↓
+┌───────────────────┬───────────────────┐
+│   Monocle3        │   Slingshot       │
+│   ↓               │   ↓               │
+│ 构建CDS           │ 使用现有降维       │
+│ 学习轨迹图        │ 拟合主曲线         │
+│ 计算伪时间        │ 计算伪时间         │
+│ 识别差异基因      │ 识别差异基因       │
+└───────────────────┴───────────────────┘
+    ↓
+交叉验证（伪时间相关性、基因重叠）
+    ↓
+综合报告
+```
+
+## 使用说明
+
+### 步骤 1：准备数据
+
+```bash
+mkdir -p trajectory_analysis_cDC1/data
+cp results/cDC1/Robjects/data_for_monocle3.rds trajectory_analysis_cDC1/data/
+```
+
+### 步骤 2：运行分析
+
+在RStudio中：
+1. 打开 `5.trajectory_analysis_integrated.Rmd`
+2. 点击 **Knit to HTML**
+3. 等待分析完成（约10-15分钟）
+
+### 步骤 3：查看结果
+
+- **HTML报告**：包含所有分析和对比
+- **Plots/Comparison/**：关键对比图
+- **Tables/pseudotime_comparison.csv**：两种方法的伪时间对比
+
+---
+
+# 环境配置
+
+## 加载必需包
+
+```{r load_packages}
+suppressPackageStartupMessages({
+  # Monocle3
+  library(monocle3)
+  library(SingleCellExperiment)
+
+  # Slingshot
+  library(slingshot)
+  library(TrajectoryUtils)
+
+  # 数据处理
+  library(dplyr)
+  library(tidyr)
+  library(Matrix)
+  library(tibble)
+
+  # 可视化
+  library(ggplot2)
+  library(viridis)
+  library(pheatmap)
+  library(patchwork)
+  library(RColorBrewer)
+  library(ggrepel)
+
+  # 工具
+  library(stats)
+})
+
+cat("✓ 所有依赖包加载完成\n")
+```
+
+## 分析配置
+
+```{r config}
+# ==================== 分析模式 ====================
+default_analysis_mode <- "cDC1"  # 默认模式（会被数据覆盖）
+
+# ==================== 路径配置 ====================
+base_dir <- getwd()
+output_dir_base <- file.path(base_dir, "trajectory_analysis")
+
+# ==================== UMAP空间选择 ====================
+# 轨迹构建的首选UMAP空间（按优先级）
+preferred_umap <- "wnn"  # 可选: "wnn", "adt", "rna"
+
+# ==================== Monocle3 参数 ====================
+monocle3_params <- list(
+  cluster_k = 20,                  # kNN参数
+  min_branch_len = 10,             # 最小分支长度
+  geodesic_distance_ratio = 1/3,   # 地理距离比例
+  diff_genes_qval = 0.05           # 差异基因q值阈值
+)
+
+# ==================== Slingshot 参数 ====================
+slingshot_params <- list(
+  start_cluster = NULL,            # 起始聚类（NULL=自动）
+  end_clusters = NULL,             # 终止聚类（NULL=自动）
+  shrink = TRUE,                   # 是否收缩到数据
+  extend = "n",                    # 延伸方式
+  reweight = TRUE,                 # 是否重新加权
+  approx_points = 150              # 曲线采样点数
+)
+
+# ==================== 可视化参数 ====================
+point_size <- 0.5
+point_alpha <- 0.6
+pseudotime_colors <- viridis::viridis(100)
+```
+
+## 加载输入数据
+
+```{r load_data}
+cat(strrep("=", 80), "\n")
+cat("加载轨迹分析输入数据\n")
+cat(strrep("=", 80), "\n\n")
+
+# 搜索输入文件
+input_paths <- c(
+  file.path(base_dir, paste0("trajectory_analysis_", default_analysis_mode),
+            "data", "data_for_monocle3.rds"),
+  file.path(base_dir, "trajectory_analysis", "data", "data_for_monocle3.rds"),
+  file.path(base_dir, "data", "data_for_monocle3.rds")
+)
+
+input_file <- NULL
+for (path in input_paths) {
+  if (file.exists(path)) {
+    input_file <- path
+    break
+  }
+}
+
+if (is.null(input_file)) {
+  stop("❌ 未找到 data_for_monocle3.rds！")
+}
+
+cat("输入文件:", input_file, "\n")
+
+# 加载数据
+data_obj <- readRDS(input_file)
+
+# 获取分析模式
+if (!is.null(data_obj$analysis_mode)) {
+  analysis_mode <- data_obj$analysis_mode
+} else {
+  analysis_mode <- default_analysis_mode
+}
+
+cat("✓ 分析模式:", analysis_mode, "\n")
+
+# 设置输出目录
+output_dir <- file.path(base_dir, paste0("trajectory_analysis_", analysis_mode))
+
+# 创建输出目录
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Robjects"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Plots", "Monocle3"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Plots", "Slingshot"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Plots", "Comparison"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Tables"), showWarnings = FALSE, recursive = TRUE)
+
+cat("\n输出目录:", output_dir, "\n")
+
+# 数据检查
+cat("\n数据组件:\n")
+required_components <- c("counts", "normalized", "metadata", "umap", "cell_type")
+for (comp in required_components) {
+  status <- if (comp %in% names(data_obj)) "✓" else "✗"
+  cat(sprintf("  %s %s\n", status, comp))
+}
+
+# 检查UMAP空间
+cat("\nUMAP空间:\n")
+for (umap_type in c("umap", "adt_umap", "wnn_umap")) {
+  if (umap_type %in% names(data_obj)) {
+    cat(sprintf("  ✓ %s\n", umap_type))
+  } else {
+    cat(sprintf("  ○ %s (不可用)\n", umap_type))
+  }
+}
+
+cat("\n数据概览:\n")
+cat("  细胞数:", ncol(data_obj$counts), "\n")
+cat("  基因数:", nrow(data_obj$counts), "\n")
+cat("  细胞类型数:", length(unique(data_obj$cell_type)), "\n\n")
+
+cat(strrep("=", 80), "\n")
+cat("✓ 数据加载完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# PART 1: Monocle3 轨迹分析 {.tabset}
+
+## 1.1 构建CDS对象
+
+```{r monocle3_cds}
+cat(strrep("=", 80), "\n")
+cat("【Monocle3】构建 CellDataSet 对象\n")
+cat(strrep("=", 80), "\n\n")
+
+# 准备表达矩阵
+expr_matrix <- data_obj$normalized
+if (!inherits(expr_matrix, "dgCMatrix")) {
+  expr_matrix <- as(as.matrix(expr_matrix), "dgCMatrix")
+}
+
+# 准备基因注释
+gene_metadata <- data.frame(
+  gene_short_name = rownames(expr_matrix),
+  row.names = rownames(expr_matrix)
+)
+
+# 准备细胞注释
+cell_metadata <- data_obj$metadata
+if (!"cell_type" %in% colnames(cell_metadata)) {
+  cell_metadata$cell_type <- data_obj$cell_type
+}
+
+# 添加UMAP坐标到metadata
+if ("umap" %in% names(data_obj)) {
+  cell_metadata$UMAP_1 <- data_obj$umap[, 1]
+  cell_metadata$UMAP_2 <- data_obj$umap[, 2]
+}
+if ("adt_umap" %in% names(data_obj)) {
+  cell_metadata$ADT_UMAP_1 <- data_obj$adt_umap[, 1]
+  cell_metadata$ADT_UMAP_2 <- data_obj$adt_umap[, 2]
+}
+if ("wnn_umap" %in% names(data_obj)) {
+  cell_metadata$WNN_UMAP_1 <- data_obj$wnn_umap[, 1]
+  cell_metadata$WNN_UMAP_2 <- data_obj$wnn_umap[, 2]
+}
+
+# 创建CDS对象
+cds <- new_cell_data_set(
+  expression_data = expr_matrix,
+  cell_metadata = cell_metadata,
+  gene_metadata = gene_metadata
+)
+
+# 添加降维结果
+if ("pca" %in% names(data_obj)) {
+  reducedDims(cds)[["PCA"]] <- data_obj$pca
+}
+if ("umap" %in% names(data_obj)) {
+  reducedDims(cds)[["UMAP"]] <- data_obj$umap
+}
+if ("adt_umap" %in% names(data_obj)) {
+  reducedDims(cds)[["ADT_UMAP"]] <- data_obj$adt_umap
+}
+if ("wnn_umap" %in% names(data_obj)) {
+  reducedDims(cds)[["WNN_UMAP"]] <- data_obj$wnn_umap
+}
+
+cat("✓ CDS对象创建完成\n")
+cat("  细胞数:", ncol(cds), "\n")
+cat("  基因数:", nrow(cds), "\n")
+cat("  降维空间:", paste(names(reducedDims(cds)), collapse = ", "), "\n\n")
+
+cat(strrep("=", 80), "\n\n")
+```
+
+## 1.2 选择UMAP空间
+
+```{r monocle3_select_umap}
+cat("【Monocle3】选择UMAP空间用于轨迹构建\n\n")
+
+# 确定可用的UMAP空间
+available_umaps <- c()
+umap_mapping <- list()
+
+if ("WNN_UMAP" %in% names(reducedDims(cds))) {
+  available_umaps <- c(available_umaps, "wnn")
+  umap_mapping[["wnn"]] <- "WNN_UMAP"
+}
+if ("ADT_UMAP" %in% names(reducedDims(cds))) {
+  available_umaps <- c(available_umaps, "adt")
+  umap_mapping[["adt"]] <- "ADT_UMAP"
+}
+if ("UMAP" %in% names(reducedDims(cds))) {
+  available_umaps <- c(available_umaps, "rna")
+  umap_mapping[["rna"]] <- "UMAP"
+}
+
+# 选择UMAP空间
+if (preferred_umap %in% available_umaps) {
+  selected_umap_monocle3 <- preferred_umap
+} else {
+  priority <- c("wnn", "adt", "rna")
+  for (umap_type in priority) {
+    if (umap_type %in% available_umaps) {
+      selected_umap_monocle3 <- umap_type
+      break
+    }
+  }
+}
+
+selected_umap_name_monocle3 <- umap_mapping[[selected_umap_monocle3]]
+
+cat("选择用于轨迹构建:", selected_umap_monocle3, "(", selected_umap_name_monocle3, ")\n")
+if (selected_umap_monocle3 != preferred_umap) {
+  cat("  ⚠ 首选", preferred_umap, "不可用，已降级\n")
+}
+cat("\n")
+```
+
+## 1.3 聚类和学习轨迹
+
+```{r monocle3_trajectory}
+cat("【Monocle3】聚类细胞\n\n")
+
+# 聚类
+cds <- cluster_cells(
+  cds,
+  reduction_method = selected_umap_name_monocle3,
+  k = monocle3_params$cluster_k,
+  cluster_method = "louvain",
+  random_seed = 42
+)
+
+cat("聚类数:", length(unique(clusters(cds))), "\n")
+cat("分区数:", length(unique(partitions(cds))), "\n\n")
+
+# 学习轨迹
+cat("【Monocle3】学习轨迹图\n\n")
+
+cds <- learn_graph(
+  cds,
+  use_partition = TRUE,
+  close_loop = FALSE,
+  learn_graph_control = list(
+    minimal_branch_len = monocle3_params$min_branch_len,
+    geodesic_distance_ratio = monocle3_params$geodesic_distance_ratio
+  )
+)
+
+cat("✓ 轨迹图学习完成\n\n")
+```
+
+## 1.4 计算伪时间
+
+```{r monocle3_pseudotime}
+cat("【Monocle3】计算伪时间\n\n")
+
+# 定义早期细胞类型
+early_markers <- list(
+  cDC1 = c("pre-cDC1", "early_cDC1", "CDP", "pre-DC"),
+  cDC2 = c("pre-cDC2", "early_cDC2", "CDP", "pre-DC"),
+  integrated = c("CDP", "pre-DC", "pre-cDC1", "pre-cDC2")
+)
+
+# 获取早期标记
+if (analysis_mode %in% names(early_markers)) {
+  mode_early_markers <- early_markers[[analysis_mode]]
+} else {
+  mode_early_markers <- early_markers[["integrated"]]
+}
+
+# 找到早期细胞
+early_cells <- which(colData(cds)$cell_type %in% mode_early_markers)
+
+if (length(early_cells) > 0) {
+  cat("找到", length(early_cells), "个早期细胞\n")
+  cat("早期标记:", paste(mode_early_markers, collapse = ", "), "\n")
+  cds <- order_cells(cds, root_cells = colnames(cds)[early_cells])
+  cat("✓ 伪时间计算完成（自动根节点）\n")
+} else {
+  cat("⚠ 未找到早期细胞，使用默认根节点\n")
+  cds <- order_cells(cds)
+}
+
+# 伪时间统计
+monocle3_pseudotime <- pseudotime(cds)
+cat("\n伪时间范围:", round(min(monocle3_pseudotime, na.rm = TRUE), 2), "-",
+    round(max(monocle3_pseudotime, na.rm = TRUE), 2), "\n")
+cat("NA值:", sum(is.na(monocle3_pseudotime)), "\n\n")
+
+# 保存CDS对象
+saveRDS(cds, file.path(output_dir, "Robjects", "monocle3_cds.rds"))
+cat("✓ Monocle3 CDS对象已保存\n\n")
+```
+
+## 1.5 Monocle3可视化
+
+```{r monocle3_viz, fig.width=14, fig.height=6}
+cat("【Monocle3】生成轨迹可视化\n\n")
+
+# 函数：绘制轨迹
+plot_monocle3_trajectory <- function(cds, reduction_name, color_by = "pseudotime") {
+  if (!reduction_name %in% names(reducedDims(cds))) {
+    return(NULL)
+  }
+
+  p <- plot_cells(
+    cds,
+    reduction_method = reduction_name,
+    color_cells_by = color_by,
+    label_cell_groups = FALSE,
+    label_leaves = FALSE,
+    label_branch_points = FALSE,
+    cell_size = point_size,
+    alpha = point_alpha
+  ) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "right"
+    )
+
+  return(p)
+}
+
+# RNA UMAP
+if ("UMAP" %in% names(reducedDims(cds))) {
+  p1 <- plot_monocle3_trajectory(cds, "UMAP", "pseudotime") +
+    ggtitle("Monocle3: RNA UMAP - Pseudotime") +
+    scale_color_viridis(option = "viridis")
+
+  p2 <- plot_monocle3_trajectory(cds, "UMAP", "cell_type") +
+    ggtitle("Monocle3: RNA UMAP - Cell Type")
+
+  combined <- p1 + p2
+  print(combined)
+
+  ggsave(
+    file.path(output_dir, "Plots", "Monocle3", "trajectory_rna_umap.png"),
+    combined, width = 14, height = 6, dpi = 300
+  )
+}
+
+# ADT UMAP
+if ("ADT_UMAP" %in% names(reducedDims(cds))) {
+  p1 <- plot_monocle3_trajectory(cds, "ADT_UMAP", "pseudotime") +
+    ggtitle("Monocle3: ADT UMAP - Pseudotime") +
+    scale_color_viridis(option = "magma")
+
+  p2 <- plot_monocle3_trajectory(cds, "ADT_UMAP", "cell_type") +
+    ggtitle("Monocle3: ADT UMAP - Cell Type")
+
+  combined <- p1 + p2
+  print(combined)
+
+  ggsave(
+    file.path(output_dir, "Plots", "Monocle3", "trajectory_adt_umap.png"),
+    combined, width = 14, height = 6, dpi = 300
+  )
+}
+
+# WNN UMAP
+if ("WNN_UMAP" %in% names(reducedDims(cds))) {
+  p1 <- plot_monocle3_trajectory(cds, "WNN_UMAP", "pseudotime") +
+    ggtitle("Monocle3: WNN UMAP - Pseudotime") +
+    scale_color_viridis(option = "plasma")
+
+  p2 <- plot_monocle3_trajectory(cds, "WNN_UMAP", "cell_type") +
+    ggtitle("Monocle3: WNN UMAP - Cell Type")
+
+  combined <- p1 + p2
+  print(combined)
+
+  ggsave(
+    file.path(output_dir, "Plots", "Monocle3", "trajectory_wnn_umap.png"),
+    combined, width = 14, height = 6, dpi = 300
+  )
+}
+
+cat("✓ Monocle3 轨迹图已保存\n\n")
+```
+
+## 1.6 Monocle3差异基因
+
+```{r monocle3_genes}
+cat("【Monocle3】识别轨迹依赖基因\n\n")
+
+monocle3_genes <- graph_test(
+  cds,
+  neighbor_graph = "principal_graph",
+  cores = 4
+)
+
+# 筛选显著基因
+monocle3_sig_genes <- monocle3_genes %>%
+  filter(q_value < monocle3_params$diff_genes_qval) %>%
+  arrange(q_value)
+
+cat("总基因数:", nrow(monocle3_genes), "\n")
+cat("显著基因数 (q < 0.05):", nrow(monocle3_sig_genes), "\n\n")
+
+# 保存结果
+monocle3_genes_df <- monocle3_genes %>%
+  rownames_to_column("gene") %>%
+  arrange(q_value)
+
+write.csv(
+  monocle3_genes_df,
+  file.path(output_dir, "Tables", "monocle3_genes.csv"),
+  row.names = FALSE
+)
+
+saveRDS(
+  monocle3_sig_genes,
+  file.path(output_dir, "Robjects", "monocle3_trajectory_genes.rds")
+)
+
+cat("✓ Monocle3 差异基因已保存\n\n")
+```
+
+---
+
+# PART 2: Slingshot 轨迹分析 {.tabset}
+
+## 2.1 准备Slingshot输入
+
+```{r slingshot_prep}
+cat(strrep("=", 80), "\n")
+cat("【Slingshot】准备分析数据\n")
+cat(strrep("=", 80), "\n\n")
+
+# 选择UMAP空间（与Monocle3相同）
+selected_umap_slingshot <- selected_umap_monocle3
+selected_umap_name_slingshot <- selected_umap_name_monocle3
+
+cat("使用UMAP空间:", selected_umap_slingshot, "(", selected_umap_name_slingshot, ")\n")
+
+# 获取UMAP坐标
+if (selected_umap_slingshot == "wnn") {
+  slingshot_umap <- data_obj$wnn_umap
+} else if (selected_umap_slingshot == "adt") {
+  slingshot_umap <- data_obj$adt_umap
+} else {
+  slingshot_umap <- data_obj$umap
+}
+
+# 获取聚类信息（使用Monocle3的聚类）
+slingshot_clusters <- as.character(clusters(cds))
+
+# 构建SingleCellExperiment对象（Slingshot需要）
+sce <- SingleCellExperiment(
+  assays = list(counts = data_obj$counts,
+                logcounts = data_obj$normalized),
+  colData = data_obj$metadata
+)
+
+# 添加细胞类型
+sce$cell_type <- data_obj$cell_type
+
+# 添加聚类信息
+sce$monocle3_cluster <- slingshot_clusters
+
+# 添加UMAP降维
+reducedDims(sce)[["UMAP"]] <- slingshot_umap
+
+cat("\n✓ SingleCellExperiment对象创建完成\n")
+cat("  细胞数:", ncol(sce), "\n")
+cat("  聚类数:", length(unique(slingshot_clusters)), "\n\n")
+
+cat(strrep("=", 80), "\n\n")
+```
+
+## 2.2 运行Slingshot
+
+```{r slingshot_run}
+cat("【Slingshot】拟合轨迹曲线\n\n")
+
+# 确定起始聚类（使用早期细胞类型）
+if (is.null(slingshot_params$start_cluster)) {
+  # 找到包含最多早期细胞的聚类
+  early_cells_slingshot <- which(sce$cell_type %in% mode_early_markers)
+
+  if (length(early_cells_slingshot) > 0) {
+    early_clusters <- sce$monocle3_cluster[early_cells_slingshot]
+    cluster_counts <- table(early_clusters)
+    start_cluster <- names(cluster_counts)[which.max(cluster_counts)]
+    cat("自动选择起始聚类:", start_cluster, "\n")
+  } else {
+    start_cluster <- NULL
+    cat("⚠ 未找到早期细胞，自动选择起始聚类\n")
+  }
+} else {
+  start_cluster <- slingshot_params$start_cluster
+}
+
+# 运行Slingshot
+cat("\n运行 Slingshot...\n")
+
+sds <- slingshot(
+  sce,
+  clusterLabels = "monocle3_cluster",
+  reducedDim = "UMAP",
+  start.clus = start_cluster,
+  end.clus = slingshot_params$end_clusters,
+  shrink = slingshot_params$shrink,
+  extend = slingshot_params$extend,
+  reweight = slingshot_params$reweight,
+  approx_points = slingshot_params$approx_points
+)
+
+cat("✓ Slingshot 轨迹拟合完成\n\n")
+
+# 查看轨迹信息
+n_lineages <- length(slingLineages(sds))
+cat("检测到的谱系数:", n_lineages, "\n")
+
+for (i in 1:n_lineages) {
+  lineage <- slingLineages(sds)[[i]]
+  cat(sprintf("  谱系 %d: %s\n", i, paste(lineage, collapse = " -> ")))
+}
+
+# 提取伪时间
+slingshot_pseudotime <- slingPseudotime(sds)
+
+if (is.matrix(slingshot_pseudotime)) {
+  # 多谱系：使用第一条谱系的伪时间
+  slingshot_pseudotime_vec <- slingshot_pseudotime[, 1]
+  cat("\n使用谱系1的伪时间\n")
+} else {
+  slingshot_pseudotime_vec <- slingshot_pseudotime
+}
+
+cat("伪时间范围:", round(min(slingshot_pseudotime_vec, na.rm = TRUE), 2), "-",
+    round(max(slingshot_pseudotime_vec, na.rm = TRUE), 2), "\n")
+cat("NA值:", sum(is.na(slingshot_pseudotime_vec)), "\n\n")
+
+# 保存Slingshot对象
+saveRDS(sds, file.path(output_dir, "Robjects", "slingshot_sds.rds"))
+cat("✓ Slingshot对象已保存\n\n")
+```
+
+## 2.3 Slingshot可视化
+
+```{r slingshot_viz, fig.width=14, fig.height=6}
+cat("【Slingshot】生成轨迹可视化\n\n")
+
+# 函数：绘制Slingshot轨迹
+plot_slingshot_trajectory <- function(sds, umap_coords, color_by = "pseudotime",
+                                      pseudotime_vec = NULL, cell_type = NULL) {
+
+  # 创建绘图数据框
+  plot_df <- data.frame(
+    UMAP_1 = umap_coords[, 1],
+    UMAP_2 = umap_coords[, 2]
+  )
+
+  if (color_by == "pseudotime" && !is.null(pseudotime_vec)) {
+    plot_df$value <- pseudotime_vec
+    p <- ggplot(plot_df, aes(x = UMAP_1, y = UMAP_2, color = value)) +
+      geom_point(size = point_size, alpha = point_alpha) +
+      scale_color_viridis(option = "viridis", na.value = "grey80") +
+      labs(color = "Pseudotime")
+  } else if (color_by == "cell_type" && !is.null(cell_type)) {
+    plot_df$cell_type <- cell_type
+    p <- ggplot(plot_df, aes(x = UMAP_1, y = UMAP_2, color = cell_type)) +
+      geom_point(size = point_size, alpha = point_alpha) +
+      labs(color = "Cell Type")
+  } else {
+    stop("Invalid color_by parameter")
+  }
+
+  # 添加Slingshot曲线
+  curves <- slingCurves(sds)
+  for (i in seq_along(curves)) {
+    curve_coords <- curves[[i]]$s[curves[[i]]$ord, ]
+    curve_df <- data.frame(
+      UMAP_1 = curve_coords[, 1],
+      UMAP_2 = curve_coords[, 2],
+      lineage = i
+    )
+    p <- p + geom_path(
+      data = curve_df,
+      aes(x = UMAP_1, y = UMAP_2),
+      color = "black",
+      size = 2,
+      inherit.aes = FALSE
+    )
+  }
+
+  p <- p +
+    theme_classic() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold"),
+      legend.position = "right",
+      aspect.ratio = 1
+    )
+
+  return(p)
+}
+
+# RNA UMAP轨迹
+if ("umap" %in% names(data_obj)) {
+  p1 <- plot_slingshot_trajectory(
+    sds, data_obj$umap,
+    color_by = "pseudotime",
+    pseudotime_vec = slingshot_pseudotime_vec
+  ) + ggtitle("Slingshot: RNA UMAP - Pseudotime")
+
+  p2 <- plot_slingshot_trajectory(
+    sds, data_obj$umap,
+    color_by = "cell_type",
+    cell_type = data_obj$cell_type
+  ) + ggtitle("Slingshot: RNA UMAP - Cell Type")
+
+  combined <- p1 + p2
+  print(combined)
+
+  ggsave(
+    file.path(output_dir, "Plots", "Slingshot", "trajectory_rna_umap.png"),
+    combined, width = 14, height = 6, dpi = 300
+  )
+}
+
+# ADT UMAP轨迹
+if ("adt_umap" %in% names(data_obj)) {
+  p1 <- plot_slingshot_trajectory(
+    sds, data_obj$adt_umap,
+    color_by = "pseudotime",
+    pseudotime_vec = slingshot_pseudotime_vec
+  ) + ggtitle("Slingshot: ADT UMAP - Pseudotime")
+
+  p2 <- plot_slingshot_trajectory(
+    sds, data_obj$adt_umap,
+    color_by = "cell_type",
+    cell_type = data_obj$cell_type
+  ) + ggtitle("Slingshot: ADT UMAP - Cell Type")
+
+  combined <- p1 + p2
+  print(combined)
+
+  ggsave(
+    file.path(output_dir, "Plots", "Slingshot", "trajectory_adt_umap.png"),
+    combined, width = 14, height = 6, dpi = 300
+  )
+}
+
+# WNN UMAP轨迹
+if ("wnn_umap" %in% names(data_obj)) {
+  p1 <- plot_slingshot_trajectory(
+    sds, data_obj$wnn_umap,
+    color_by = "pseudotime",
+    pseudotime_vec = slingshot_pseudotime_vec
+  ) + ggtitle("Slingshot: WNN UMAP - Pseudotime")
+
+  p2 <- plot_slingshot_trajectory(
+    sds, data_obj$wnn_umap,
+    color_by = "cell_type",
+    cell_type = data_obj$cell_type
+  ) + ggtitle("Slingshot: WNN UMAP - Cell Type")
+
+  combined <- p1 + p2
+  print(combined)
+
+  ggsave(
+    file.path(output_dir, "Plots", "Slingshot", "trajectory_wnn_umap.png"),
+    combined, width = 14, height = 6, dpi = 300
+  )
+}
+
+cat("✓ Slingshot 轨迹图已保存\n\n")
+```
+
+## 2.4 Slingshot差异基因
+
+```{r slingshot_genes}
+cat("【Slingshot】识别轨迹依赖基因\n\n")
+
+# 使用GAM模型识别沿伪时间变化的基因
+# 注意：这里使用简化的方法，实际可以使用tradeSeq包
+
+library(mgcv)
+
+# 准备数据
+expr_mat <- as.matrix(data_obj$normalized)
+pt <- slingshot_pseudotime_vec
+valid_cells <- !is.na(pt)
+
+expr_mat_valid <- expr_mat[, valid_cells]
+pt_valid <- pt[valid_cells]
+
+# 对每个基因拟合GAM模型
+cat("拟合GAM模型（可能需要几分钟）...\n")
+
+slingshot_gene_results <- lapply(1:min(500, nrow(expr_mat_valid)), function(i) {
+  if (i %% 100 == 0) cat("  进度:", i, "/", min(500, nrow(expr_mat_valid)), "\n")
+
+  gene_expr <- expr_mat_valid[i, ]
+
+  # 拟合GAM
+  tryCatch({
+    fit <- gam(gene_expr ~ s(pt_valid, bs = "cs"), family = "gaussian")
+
+    # 提取p值
+    summary_fit <- summary(fit)
+    p_val <- summary_fit$s.pv
+
+    list(
+      gene = rownames(expr_mat_valid)[i],
+      p_value = p_val
+    )
+  }, error = function(e) {
+    list(
+      gene = rownames(expr_mat_valid)[i],
+      p_value = NA
+    )
+  })
+})
+
+# 整理结果
+slingshot_genes_df <- do.call(rbind, lapply(slingshot_gene_results, as.data.frame))
+slingshot_genes_df$q_value <- p.adjust(slingshot_genes_df$p_value, method = "fdr")
+slingshot_genes_df <- slingshot_genes_df[order(slingshot_genes_df$p_value), ]
+
+# 筛选显著基因
+slingshot_sig_genes <- slingshot_genes_df[slingshot_genes_df$q_value < 0.05 & !is.na(slingshot_genes_df$q_value), ]
+
+cat("\n分析基因数:", nrow(slingshot_genes_df), "\n")
+cat("显著基因数 (q < 0.05):", nrow(slingshot_sig_genes), "\n\n")
+
+# 保存结果
+write.csv(
+  slingshot_genes_df,
+  file.path(output_dir, "Tables", "slingshot_genes.csv"),
+  row.names = FALSE
+)
+
+saveRDS(
+  slingshot_sig_genes,
+  file.path(output_dir, "Robjects", "slingshot_trajectory_genes.rds")
+)
+
+cat("✓ Slingshot 差异基因已保存\n\n")
+```
+
+---
+
+# PART 3: 交叉验证 {.tabset}
+
+## 3.1 伪时间相关性
+
+```{r comparison_pseudotime, fig.width=8, fig.height=7}
+cat(strrep("=", 80), "\n")
+cat("【交叉验证】伪时间相关性分析\n")
+cat(strrep("=", 80), "\n\n")
+
+# 对齐两种方法的伪时间
+comparison_df <- data.frame(
+  cell_id = colnames(cds),
+  monocle3_pt = monocle3_pseudotime,
+  slingshot_pt = slingshot_pseudotime_vec,
+  cell_type = data_obj$cell_type
+)
+
+# 移除NA值
+comparison_df_complete <- comparison_df[complete.cases(comparison_df[, c("monocle3_pt", "slingshot_pt")]), ]
+
+cat("有效细胞数（两种方法都有伪时间）:", nrow(comparison_df_complete), "\n")
+
+# 计算相关性
+cor_pearson <- cor(comparison_df_complete$monocle3_pt,
+                   comparison_df_complete$slingshot_pt,
+                   method = "pearson")
+cor_spearman <- cor(comparison_df_complete$monocle3_pt,
+                    comparison_df_complete$slingshot_pt,
+                    method = "spearman")
+
+cat("\n相关性分析:\n")
+cat("  Pearson相关系数:", round(cor_pearson, 3), "\n")
+cat("  Spearman相关系数:", round(cor_spearman, 3), "\n\n")
+
+# 可视化
+p_corr <- ggplot(comparison_df_complete, aes(x = monocle3_pt, y = slingshot_pt)) +
+  geom_point(aes(color = cell_type), size = 1, alpha = 0.6) +
+  geom_smooth(method = "lm", color = "black", linetype = "dashed") +
+  labs(
+    title = "Pseudotime Correlation: Monocle3 vs Slingshot",
+    subtitle = sprintf("Pearson r = %.3f, Spearman ρ = %.3f", cor_pearson, cor_spearman),
+    x = "Monocle3 Pseudotime",
+    y = "Slingshot Pseudotime",
+    color = "Cell Type"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+
+print(p_corr)
+
+ggsave(
+  file.path(output_dir, "Plots", "Comparison", "pseudotime_correlation.png"),
+  p_corr, width = 8, height = 7, dpi = 300
+)
+
+# 保存对比数据
+write.csv(
+  comparison_df,
+  file.path(output_dir, "Tables", "pseudotime_comparison.csv"),
+  row.names = FALSE
+)
+
+cat("✓ 伪时间相关性分析完成\n\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+## 3.2 轨迹叠加可视化
+
+```{r comparison_overlay, fig.width=16, fig.height=6}
+cat("【交叉验证】轨迹叠加对比\n\n")
+
+# 选择WNN UMAP（如果可用）进行对比
+if ("wnn_umap" %in% names(data_obj)) {
+  umap_for_comparison <- data_obj$wnn_umap
+  umap_name <- "WNN UMAP"
+} else if ("adt_umap" %in% names(data_obj)) {
+  umap_for_comparison <- data_obj$adt_umap
+  umap_name <- "ADT UMAP"
+} else {
+  umap_for_comparison <- data_obj$umap
+  umap_name <- "RNA UMAP"
+}
+
+cat("使用", umap_name, "进行对比\n")
+
+# Monocle3轨迹
+p_mono <- plot_monocle3_trajectory(cds, selected_umap_name_monocle3, "pseudotime") +
+  ggtitle("Monocle3 Trajectory") +
+  scale_color_viridis(option = "viridis")
+
+# Slingshot轨迹
+p_sling <- plot_slingshot_trajectory(
+  sds, umap_for_comparison,
+  color_by = "pseudotime",
+  pseudotime_vec = slingshot_pseudotime_vec
+) +
+  ggtitle("Slingshot Trajectory") +
+  scale_color_viridis(option = "viridis")
+
+# 组合图
+combined_overlay <- p_mono + p_sling +
+  plot_annotation(
+    title = paste("Trajectory Comparison on", umap_name),
+    theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+  )
+
+print(combined_overlay)
+
+ggsave(
+  file.path(output_dir, "Plots", "Comparison", "trajectory_overlay.png"),
+  combined_overlay, width = 16, height = 6, dpi = 300
+)
+
+cat("\n✓ 轨迹叠加图已保存\n\n")
+```
+
+## 3.3 差异基因重叠
+
+```{r comparison_genes, fig.width=8, fig.height=8}
+cat("【交叉验证】差异基因重叠分析\n\n")
+
+# 获取两种方法的显著基因
+monocle3_gene_list <- rownames(monocle3_sig_genes)
+slingshot_gene_list <- slingshot_sig_genes$gene
+
+cat("Monocle3显著基因数:", length(monocle3_gene_list), "\n")
+cat("Slingshot显著基因数:", length(slingshot_gene_list), "\n")
+
+# 计算重叠
+overlapping_genes <- intersect(monocle3_gene_list, slingshot_gene_list)
+cat("重叠基因数:", length(overlapping_genes), "\n")
+
+# 计算Jaccard指数
+jaccard_index <- length(overlapping_genes) /
+  length(union(monocle3_gene_list, slingshot_gene_list))
+cat("Jaccard指数:", round(jaccard_index, 3), "\n\n")
+
+# 保存重叠基因
+if (length(overlapping_genes) > 0) {
+  overlapping_genes_df <- data.frame(
+    gene = overlapping_genes,
+    monocle3_qval = monocle3_genes_df$q_value[match(overlapping_genes, monocle3_genes_df$gene)],
+    slingshot_qval = slingshot_genes_df$q_value[match(overlapping_genes, slingshot_genes_df$gene)]
+  ) %>%
+    arrange(monocle3_qval)
+
+  write.csv(
+    overlapping_genes_df,
+    file.path(output_dir, "Tables", "overlapping_genes.csv"),
+    row.names = FALSE
+  )
+
+  cat("Top 10 重叠基因:\n")
+  print(head(overlapping_genes_df, 10))
+}
+
+# Venn图
+library(VennDiagram)
+
+venn_plot <- venn.diagram(
+  x = list(
+    Monocle3 = monocle3_gene_list,
+    Slingshot = slingshot_gene_list
+  ),
+  category.names = c("Monocle3", "Slingshot"),
+  filename = NULL,
+  output = TRUE,
+  col = "transparent",
+  fill = c("#377EB8", "#E41A1C"),
+  alpha = 0.5,
+  cex = 1.5,
+  fontfamily = "sans",
+  cat.cex = 1.2,
+  cat.fontfamily = "sans",
+  cat.pos = c(-20, 20),
+  cat.dist = c(0.05, 0.05)
+)
+
+grid::grid.newpage()
+grid::grid.draw(venn_plot)
+
+# 保存Venn图
+png(file.path(output_dir, "Plots", "Comparison", "gene_overlap_venn.png"),
+    width = 8, height = 8, units = "in", res = 300)
+grid::grid.draw(venn_plot)
+dev.off()
+
+cat("\n✓ 差异基因重叠分析完成\n\n")
+```
+
+## 3.4 对比总结
+
+```{r comparison_summary}
+cat(strrep("=", 80), "\n")
+cat("【交叉验证】综合评估\n")
+cat(strrep("=", 80), "\n\n")
+
+# 创建对比总结表
+summary_table <- data.frame(
+  Metric = c(
+    "分析细胞数",
+    "聚类/谱系数",
+    "伪时间范围",
+    "显著基因数 (q<0.05)",
+    "伪时间Pearson相关",
+    "伪时间Spearman相关",
+    "重叠基因数",
+    "Jaccard指数"
+  ),
+  Monocle3 = c(
+    ncol(cds),
+    length(unique(clusters(cds))),
+    sprintf("%.2f - %.2f", min(monocle3_pseudotime, na.rm=T), max(monocle3_pseudotime, na.rm=T)),
+    nrow(monocle3_sig_genes),
+    sprintf("%.3f", cor_pearson),
+    "-",
+    length(overlapping_genes),
+    "-"
+  ),
+  Slingshot = c(
+    ncol(sce),
+    length(slingLineages(sds)),
+    sprintf("%.2f - %.2f", min(slingshot_pseudotime_vec, na.rm=T), max(slingshot_pseudotime_vec, na.rm=T)),
+    nrow(slingshot_sig_genes),
+    "-",
+    sprintf("%.3f", cor_spearman),
+    length(overlapping_genes),
+    sprintf("%.3f", jaccard_index)
+  )
+)
+
+cat("对比总结表:\n\n")
+print(summary_table)
+
+# 保存总结
+write.csv(
+  summary_table,
+  file.path(output_dir, "Tables", "comparison_summary.csv"),
+  row.names = FALSE
+)
+
+# 保存对比结果对象
+comparison_results <- list(
+  pseudotime_correlation = list(
+    pearson = cor_pearson,
+    spearman = cor_spearman
+  ),
+  gene_overlap = list(
+    monocle3_genes = monocle3_gene_list,
+    slingshot_genes = slingshot_gene_list,
+    overlapping_genes = overlapping_genes,
+    jaccard_index = jaccard_index
+  ),
+  pseudotime_data = comparison_df
+)
+
+saveRDS(
+  comparison_results,
+  file.path(output_dir, "Robjects", "comparison_results.rds")
+)
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 交叉验证完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# 结论与建议
+
+```{r conclusions}
+cat("\n", strrep("=", 80), "\n")
+cat("📊 轨迹分析综合报告\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("【分析配置】\n")
+cat("  模式:", analysis_mode, "\n")
+cat("  UMAP空间:", selected_umap_monocle3, "\n")
+cat("  细胞数:", ncol(cds), "\n\n")
+
+cat("【Monocle3 结果】\n")
+cat("  聚类数:", length(unique(clusters(cds))), "\n")
+cat("  显著基因数:", nrow(monocle3_sig_genes), "\n")
+cat("  伪时间范围:", sprintf("%.2f - %.2f", min(monocle3_pseudotime, na.rm=T),
+                          max(monocle3_pseudotime, na.rm=T)), "\n\n")
+
+cat("【Slingshot 结果】\n")
+cat("  谱系数:", length(slingLineages(sds)), "\n")
+cat("  显著基因数:", nrow(slingshot_sig_genes), "\n")
+cat("  伪时间范围:", sprintf("%.2f - %.2f", min(slingshot_pseudotime_vec, na.rm=T),
+                          max(slingshot_pseudotime_vec, na.rm=T)), "\n\n")
+
+cat("【交叉验证】\n")
+cat("  伪时间Pearson相关:", sprintf("%.3f", cor_pearson), "\n")
+cat("  伪时间Spearman相关:", sprintf("%.3f", cor_spearman), "\n")
+cat("  重叠基因数:", length(overlapping_genes), "\n")
+cat("  Jaccard指数:", sprintf("%.3f", jaccard_index), "\n\n")
+
+# 结论
+cat("【结论】\n")
+
+if (cor_spearman > 0.7) {
+  cat("  ✅ 两种方法的伪时间高度一致 (ρ > 0.7)\n")
+  cat("     → 轨迹结果robust，可信度高\n")
+} else if (cor_spearman > 0.5) {
+  cat("  ⚠ 两种方法的伪时间中等一致 (0.5 < ρ < 0.7)\n")
+  cat("     → 建议检查数据质量和参数设置\n")
+} else {
+  cat("  ❌ 两种方法的伪时间一致性较低 (ρ < 0.5)\n")
+  cat("     → 需要仔细检查数据和方法适用性\n")
+}
+
+if (jaccard_index > 0.3) {
+  cat("  ✅ 差异基因重叠度较高 (Jaccard > 0.3)\n")
+  cat("     → 识别的轨迹基因robust\n")
+} else {
+  cat("  ⚠ 差异基因重叠度较低 (Jaccard < 0.3)\n")
+  cat("     → 两种方法可能捕捉不同的生物学信号\n")
+}
+
+cat("\n【建议】\n")
+cat("  • 优先使用重叠基因进行下游分析（更robust）\n")
+cat("  • 结合两种方法的结果进行综合解释\n")
+cat("  • 使用RNA velocity进一步验证轨迹方向\n")
+cat("  • 进行功能富集分析（GO/KEGG）\n\n")
+
+cat("【输出目录】\n")
+cat("  ", output_dir, "/\n")
+cat("  ├─ Plots/Monocle3/      - Monocle3轨迹图\n")
+cat("  ├─ Plots/Slingshot/     - Slingshot轨迹图\n")
+cat("  ├─ Plots/Comparison/    - 对比图\n")
+cat("  ├─ Tables/              - 伪时间和基因表\n")
+cat("  └─ Robjects/            - R对象（可重复使用）\n\n")
+
+cat(strrep("=", 80), "\n")
+cat("✅ 分析完成！\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# Session Info
+
+```{r session_info}
+sessionInfo()
+```
