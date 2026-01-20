@@ -1156,6 +1156,38 @@ sig_genes <- trajectory_genes %>%
 cat("显著基因统计:\n")
 cat("  总基因数:", nrow(trajectory_genes), "\n")
 cat("  显著基因数 (q <", diff_genes_qval, "):", nrow(sig_genes), "\n")
+
+# ⭐ 添加详细诊断信息
+if (nrow(sig_genes) == 0) {
+  cat("\n⚠ 警告：未找到显著的轨迹依赖基因！\n\n")
+  cat("可能的原因：\n")
+  cat("  1. 伪时间根节点选择错误（最常见原因）\n")
+  cat("     - 如果您在交互式选择中点击了错误的位置\n")
+  cat("     - 伪时间方向可能与真实发育方向相反或错误\n\n")
+  cat("  2. 阈值太严格\n")
+  cat("     - 当前 q-value 阈值:", diff_genes_qval, "\n\n")
+
+  # 检查更宽松的阈值
+  cat("使用更宽松阈值的基因数:\n")
+  cat("  q < 0.1 :", sum(trajectory_genes$q_value < 0.1, na.rm = TRUE), "个基因\n")
+  cat("  q < 0.2 :", sum(trajectory_genes$q_value < 0.2, na.rm = TRUE), "个基因\n")
+  cat("  p < 0.05:", sum(trajectory_genes$p_value < 0.05, na.rm = TRUE), "个基因\n\n")
+
+  # 显示q值分布
+  cat("q-value 分布：\n")
+  cat("  最小 q:", min(trajectory_genes$q_value, na.rm = TRUE), "\n")
+  cat("  前10个基因的 q-values:\n")
+  top10_qvals <- head(sort(trajectory_genes$q_value), 10)
+  for (i in seq_along(top10_qvals)) {
+    cat(sprintf("    %d. %.6f\n", i, top10_qvals[i]))
+  }
+
+  cat("\n建议：\n")
+  cat("  1. 检查伪时间是否合理（查看轨迹图）\n")
+  cat("  2. 如果伪时间方向错误，重新运行并正确选择根节点\n")
+  cat("  3. 或者临时使用更宽松的阈值（如 q < 0.1）\n\n")
+}
+
 cat("  Top基因:", min(n_top_genes, nrow(sig_genes)), "\n")
 
 # 保存完整结果
