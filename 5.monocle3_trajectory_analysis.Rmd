@@ -766,8 +766,24 @@ cat("\n")
 # 找到早期细胞
 early_cells <- which(colData(cds)$cell_type %in% early_markers)
 
+# 详细调试：逐个检查早期标记
+cat("详细匹配检查:\n")
+for (marker in early_markers) {
+  matching_cells <- sum(colData(cds)$cell_type == marker, na.rm = TRUE)
+  cat(sprintf("  '%s': %d cells\n", marker, matching_cells))
+
+  # 如果没找到，尝试模糊匹配
+  if (matching_cells == 0) {
+    similar <- actual_celltypes[grepl(marker, actual_celltypes, ignore.case = TRUE)]
+    if (length(similar) > 0) {
+      cat(sprintf("    ⚠ 未精确匹配，但发现相似名称: %s\n", paste(similar, collapse = ", ")))
+    }
+  }
+}
+cat("\n")
+
 if (length(early_cells) > 0) {
-  cat("  找到", length(early_cells), "个早期细胞\n")
+  cat("  ✓ 找到", length(early_cells), "个早期细胞\n")
 
   # 使用这些细胞作为起点
   cds <- order_cells(cds, root_cells = colnames(cds)[early_cells])
