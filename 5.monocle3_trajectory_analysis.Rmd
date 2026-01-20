@@ -1,0 +1,1155 @@
+---
+title: "Monocle3 轨迹分析 - cDC 发育动态"
+author: "GSE228544 CITE-seq Analysis Pipeline"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cosmo
+    code_folding: show
+    df_print: paged
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8,
+  dpi = 300
+)
+```
+
+# 脚本说明 {.tabset}
+
+## 概述
+
+本脚本使用 **Monocle3** 进行 cDC 发育轨迹分析，充分利用 CITE-seq 的多模态数据。
+
+### 主要功能
+
+1. **多模态UMAP空间支持**
+   - RNA UMAP（基于基因表达）
+   - ADT UMAP（基于表面蛋白）
+   - WNN UMAP（加权最近邻整合）
+
+2. **轨迹分析**
+   - 细胞发育轨迹构建
+   - 伪时间（pseudotime）推断
+   - 分支点（branch points）识别
+
+3. **差异分析**
+   - 轨迹依赖基因（trajectory-dependent genes）
+   - 分支依赖基因（branch-dependent genes）
+   - 功能富集分析
+
+4. **多模式支持**
+   - cDC1 特异分析
+   - cDC2 特异分析
+   - 整合分析（integrated）
+
+### 输入数据
+
+- 来源：`4.downstream_analysis.Rmd` 输出的 `data_for_monocle3.rds`
+- 包含：counts, normalized, metadata, umap, adt_umap, wnn_umap, cell_type, pca
+
+### 输出结果
+
+```
+monocle3_analysis_{mode}/
+├─ data/
+│  └─ data_for_monocle3.rds           # 输入数据（用户提供）
+├─ Robjects/
+│  ├─ cds_object.rds                  # Monocle3 CDS对象
+│  ├─ trajectory_genes.rds            # 轨迹相关基因
+│  └─ pseudotime_results.rds          # 伪时间分析结果
+├─ Plots/
+│  ├─ Trajectory/                     # 轨迹可视化
+│  │  ├─ trajectory_rna_umap.png      # RNA UMAP空间轨迹
+│  │  ├─ trajectory_adt_umap.png      # ADT UMAP空间轨迹
+│  │  ├─ trajectory_wnn_umap.png      # WNN UMAP空间轨迹
+│  │  ├─ pseudotime_rna_umap.png      # RNA UMAP伪时间
+│  │  ├─ pseudotime_adt_umap.png      # ADT UMAP伪时间
+│  │  └─ pseudotime_wnn_umap.png      # WNN UMAP伪时间
+│  ├─ Genes/                          # 基因表达动态
+│  │  ├─ trajectory_genes_heatmap.png
+│  │  └─ top_genes_pseudotime_*.png
+│  └─ QC/
+│     └─ trajectory_qc_metrics.png
+└─ Tables/
+   ├─ trajectory_genes.csv            # 轨迹依赖基因列表
+   ├─ pseudotime_by_cell.csv          # 每个细胞的伪时间
+   └─ branch_genes.csv                # 分支特异基因
+```
+
+## 技术特性
+
+### UMAP空间选择逻辑
+
+根据数据可用性自动选择和可视化：
+
+1. **RNA UMAP** (`umap`)
+   - 必须存在
+   - 基于基因表达的低维空间
+   - 适合：基因表达模式分析
+
+2. **ADT UMAP** (`adt_umap`)
+   - 条件检测：`"adt_umap" %in% names(monocle3_data)`
+   - 基于表面蛋白的低维空间
+   - 适合：蛋白表达和表型分析
+
+3. **WNN UMAP** (`wnn_umap`)
+   - 条件检测：`"wnn_umap" %in% names(monocle3_data)`
+   - 整合RNA+蛋白的加权空间
+   - **推荐用于轨迹构建**（最全面）
+
+### 分析模式
+
+通过 `analysis_mode` 变量控制（从输入数据中读取）：
+
+- `cDC1`：cDC1 特异分析（6发育阶段）
+- `cDC2`：cDC2 特异分析（5发育阶段）
+- `integrated`：整合分析（全部cDC）
+
+## 使用说明
+
+### 准备数据
+
+将 `data_for_monocle3.rds` 放入对应的 `data/` 文件夹：
+
+```bash
+# 示例：cDC1模式
+monocle3_analysis_cDC1/data/data_for_monocle3.rds
+
+# 示例：cDC2模式
+monocle3_analysis_cDC2/data/data_for_monocle3.rds
+
+# 示例：整合模式
+monocle3_analysis_integrated/data/data_for_monocle3.rds
+```
+
+### 运行分析
+
+1. **选择分析模式**：修改下方配置区域的 `analysis_mode`
+2. **Knit HTML**：生成分析报告
+3. **查看结果**：在输出目录中查看图表和数据表
+
+### 依赖包
+
+```r
+# Monocle3 (需要从GitHub安装)
+if (!requireNamespace("monocle3", quietly = TRUE)) {
+  devtools::install_github("cole-trapnell-lab/monocle3")
+}
+
+# Bioconductor
+BiocManager::install(c("SingleCellExperiment", "SummarizedExperiment"))
+
+# CRAN
+install.packages(c("ggplot2", "dplyr", "tidyr", "viridis", "pheatmap"))
+```
+
+---
+
+# 配置与数据加载
+
+## 分析配置
+
+```{r config}
+# ==================== 选择分析模式 ====================
+# 注意：此变量会被输入数据中的 analysis_mode 覆盖
+# 仅在数据中未指定时使用
+default_analysis_mode <- "cDC1"  # 可选: "cDC1", "cDC2", "integrated"
+
+# ==================== 路径配置 ====================
+# 工作目录（.Rmd文件所在目录）
+base_dir <- getwd()
+cat("工作目录:", base_dir, "\n")
+
+# 输出根目录名称（将根据实际 analysis_mode 更新）
+output_dir_base <- file.path(base_dir, "monocle3_analysis")
+
+# ==================== UMAP空间选择 ====================
+# 设置轨迹构建的首选UMAP空间（按优先级）
+# "wnn" > "adt" > "rna"
+# 如果首选不可用，会自动降级到下一个
+preferred_umap_for_trajectory <- "wnn"  # 可选: "wnn", "adt", "rna"
+
+# ==================== 伪时间分析参数 ====================
+# 差异基因分析的q值阈值
+diff_genes_qval <- 0.05
+
+# 展示的top基因数量
+n_top_genes <- 20
+
+# ==================== 可视化参数 ====================
+# 颜色方案
+pseudotime_colors <- viridis::viridis(100)
+celltype_colors <- scales::hue_pal()(20)  # 自动生成足够的颜色
+
+# 点大小
+point_size <- 0.5
+point_alpha <- 0.6
+```
+
+## 加载必需包
+
+```{r load_packages}
+suppressPackageStartupMessages({
+  # 核心分析
+  library(monocle3)
+  library(SingleCellExperiment)
+  library(SummarizedExperiment)
+
+  # 数据处理
+  library(dplyr)
+  library(tidyr)
+  library(Matrix)
+
+  # 可视化
+  library(ggplot2)
+  library(viridis)
+  library(pheatmap)
+  library(patchwork)
+  library(RColorBrewer)
+
+  # 工具
+  library(tibble)
+})
+
+cat("✓ 所有依赖包加载完成\n")
+```
+
+## 加载输入数据
+
+```{r load_data}
+cat(strrep("=", 80), "\n")
+cat("加载 Monocle3 分析输入数据\n")
+cat(strrep("=", 80), "\n\n")
+
+# ==================== 第一步：确定分析模式 ====================
+# 先尝试从默认位置加载数据以获取 analysis_mode
+temp_input_paths <- c(
+  file.path(base_dir, paste0("monocle3_analysis_", default_analysis_mode),
+            "data", "data_for_monocle3.rds"),
+  file.path(base_dir, "monocle3_analysis", "data", "data_for_monocle3.rds"),
+  file.path(base_dir, "data", "data_for_monocle3.rds")
+)
+
+input_file <- NULL
+for (path in temp_input_paths) {
+  if (file.exists(path)) {
+    input_file <- path
+    break
+  }
+}
+
+if (is.null(input_file)) {
+  stop("❌ 未找到 data_for_monocle3.rds！\n",
+       "请将文件放入以下位置之一：\n",
+       paste("  -", temp_input_paths, collapse = "\n"))
+}
+
+cat("输入文件:", input_file, "\n")
+
+# 加载数据
+monocle3_data <- readRDS(input_file)
+
+# 获取真实的分析模式
+if (!is.null(monocle3_data$analysis_mode)) {
+  analysis_mode <- monocle3_data$analysis_mode
+  cat("✓ 使用数据中指定的分析模式:", analysis_mode, "\n")
+} else {
+  analysis_mode <- default_analysis_mode
+  cat("⚠ 数据中未指定分析模式，使用默认:", analysis_mode, "\n")
+}
+
+# ==================== 第二步：根据实际模式设置输出目录 ====================
+output_dir <- file.path(base_dir, paste0("monocle3_analysis_", analysis_mode))
+
+# 创建输出目录结构
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Robjects"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Plots", "Trajectory"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Plots", "Genes"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Plots", "QC"), showWarnings = FALSE, recursive = TRUE)
+dir.create(file.path(output_dir, "Tables"), showWarnings = FALSE, recursive = TRUE)
+
+cat("\n输出目录:", output_dir, "\n")
+
+# ==================== 第三步：检查数据完整性 ====================
+cat("\n数据组件检查:\n")
+
+required_components <- c("counts", "normalized", "metadata", "umap", "cell_type")
+for (comp in required_components) {
+  if (comp %in% names(monocle3_data)) {
+    cat(sprintf("  ✓ %s\n", comp))
+  } else {
+    stop(sprintf("❌ 缺少必需组件: %s", comp))
+  }
+}
+
+# 检查可选的UMAP空间
+optional_umaps <- c("adt_umap", "wnn_umap", "pca")
+cat("\n可选组件:\n")
+for (comp in optional_umaps) {
+  if (comp %in% names(monocle3_data)) {
+    cat(sprintf("  ✓ %s (可用)\n", comp))
+  } else {
+    cat(sprintf("  ○ %s (不可用)\n", comp))
+  }
+}
+
+# 数据概览
+cat("\n数据概览:\n")
+cat("  细胞数:", ncol(monocle3_data$counts), "\n")
+cat("  基因数:", nrow(monocle3_data$counts), "\n")
+cat("  细胞类型数:", length(unique(monocle3_data$cell_type)), "\n")
+
+# 显示细胞类型分布
+cat("\n细胞类型分布:\n")
+print(table(monocle3_data$cell_type))
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 数据加载完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# 构建 Monocle3 CDS 对象
+
+## 创建 CellDataSet
+
+```{r create_cds}
+cat(strrep("=", 80), "\n")
+cat("构建 Monocle3 CellDataSet 对象\n")
+cat(strrep("=", 80), "\n\n")
+
+# ==================== 准备表达数据 ====================
+# 使用归一化数据（Monocle3推荐）
+expression_matrix <- monocle3_data$normalized
+
+# 确保是稀疏矩阵格式
+if (!inherits(expression_matrix, "dgCMatrix")) {
+  expression_matrix <- as(as.matrix(expression_matrix), "dgCMatrix")
+}
+
+cat("表达矩阵维度:", nrow(expression_matrix), "genes ×",
+    ncol(expression_matrix), "cells\n")
+
+# ==================== 准备基因注释 ====================
+gene_metadata <- data.frame(
+  gene_short_name = rownames(expression_matrix),
+  row.names = rownames(expression_matrix)
+)
+
+cat("基因注释:", nrow(gene_metadata), "genes\n")
+
+# ==================== 准备细胞注释 ====================
+cell_metadata <- monocle3_data$metadata
+
+# 添加细胞类型（如果metadata中没有）
+if (!"cell_type" %in% colnames(cell_metadata)) {
+  cell_metadata$cell_type <- monocle3_data$cell_type
+}
+
+# 添加所有可用的UMAP坐标到metadata
+if ("umap" %in% names(monocle3_data)) {
+  cell_metadata$UMAP_1 <- monocle3_data$umap[, 1]
+  cell_metadata$UMAP_2 <- monocle3_data$umap[, 2]
+}
+
+if ("adt_umap" %in% names(monocle3_data)) {
+  cell_metadata$ADT_UMAP_1 <- monocle3_data$adt_umap[, 1]
+  cell_metadata$ADT_UMAP_2 <- monocle3_data$adt_umap[, 2]
+}
+
+if ("wnn_umap" %in% names(monocle3_data)) {
+  cell_metadata$WNN_UMAP_1 <- monocle3_data$wnn_umap[, 1]
+  cell_metadata$WNN_UMAP_2 <- monocle3_data$wnn_umap[, 2]
+}
+
+cat("细胞注释:", nrow(cell_metadata), "cells\n")
+cat("  包含列:", paste(colnames(cell_metadata), collapse = ", "), "\n")
+
+# ==================== 创建 CDS 对象 ====================
+cds <- new_cell_data_set(
+  expression_data = expression_matrix,
+  cell_metadata = cell_metadata,
+  gene_metadata = gene_metadata
+)
+
+cat("\n✓ CellDataSet 对象创建完成\n")
+cat("  Cells:", ncol(cds), "\n")
+cat("  Genes:", nrow(cds), "\n")
+
+# ==================== 添加降维结果 ====================
+# 注意：Monocle3使用SingleCellExperiment的reducedDims存储降维结果
+
+# 添加 PCA（如果有）
+if ("pca" %in% names(monocle3_data)) {
+  reducedDims(cds)[["PCA"]] <- monocle3_data$pca
+  cat("  ✓ 添加 PCA 降维\n")
+}
+
+# 添加 RNA UMAP
+if ("umap" %in% names(monocle3_data)) {
+  reducedDims(cds)[["UMAP"]] <- monocle3_data$umap
+  cat("  ✓ 添加 RNA UMAP 降维\n")
+}
+
+# 添加 ADT UMAP（如果有）
+if ("adt_umap" %in% names(monocle3_data)) {
+  reducedDims(cds)[["ADT_UMAP"]] <- monocle3_data$adt_umap
+  cat("  ✓ 添加 ADT UMAP 降维\n")
+}
+
+# 添加 WNN UMAP（如果有）
+if ("wnn_umap" %in% names(monocle3_data)) {
+  reducedDims(cds)[["WNN_UMAP"]] <- monocle3_data$wnn_umap
+  cat("  ✓ 添加 WNN UMAP 降维\n")
+}
+
+cat("\n可用的降维空间:", paste(names(reducedDims(cds)), collapse = ", "), "\n")
+
+# ==================== 保存 CDS 对象 ====================
+saveRDS(cds, file.path(output_dir, "Robjects", "cds_object.rds"))
+cat("\n✓ CDS对象已保存:", file.path(output_dir, "Robjects", "cds_object.rds"), "\n")
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ Monocle3 CDS 对象构建完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+## 预处理（可选）
+
+```{r preprocess_cds}
+cat(strrep("=", 80), "\n")
+cat("Monocle3 数据预处理\n")
+cat(strrep("=", 80), "\n\n")
+
+# 由于我们已经有了上游的降维结果（PCA, UMAP），
+# 通常不需要重新运行 preprocess_cds()
+# 但如果需要 Monocle3 的默认预处理，可以取消注释以下代码：
+
+# cds <- preprocess_cds(cds,
+#                       num_dim = 50,
+#                       method = "PCA",
+#                       norm_method = "log",
+#                       scaling = TRUE)
+
+cat("跳过预处理（使用上游提供的降维结果）\n")
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 预处理完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# 轨迹分析
+
+## 选择UMAP空间用于轨迹构建
+
+```{r select_umap}
+cat(strrep("=", 80), "\n")
+cat("选择UMAP空间用于轨迹构建\n")
+cat(strrep("=", 80), "\n\n")
+
+# 确定可用的UMAP空间
+available_umaps <- c()
+umap_mapping <- list()
+
+if ("WNN_UMAP" %in% names(reducedDims(cds))) {
+  available_umaps <- c(available_umaps, "wnn")
+  umap_mapping[["wnn"]] <- "WNN_UMAP"
+}
+if ("ADT_UMAP" %in% names(reducedDims(cds))) {
+  available_umaps <- c(available_umaps, "adt")
+  umap_mapping[["adt"]] <- "ADT_UMAP"
+}
+if ("UMAP" %in% names(reducedDims(cds))) {
+  available_umaps <- c(available_umaps, "rna")
+  umap_mapping[["rna"]] <- "UMAP"
+}
+
+cat("可用的UMAP空间:", paste(available_umaps, collapse = ", "), "\n")
+
+# 根据优先级选择
+if (preferred_umap_for_trajectory %in% available_umaps) {
+  selected_umap <- preferred_umap_for_trajectory
+} else {
+  # 自动降级
+  priority <- c("wnn", "adt", "rna")
+  for (umap_type in priority) {
+    if (umap_type %in% available_umaps) {
+      selected_umap <- umap_type
+      break
+    }
+  }
+}
+
+selected_umap_name <- umap_mapping[[selected_umap]]
+
+cat("\n选择用于轨迹构建的UMAP:", selected_umap, "(", selected_umap_name, ")\n")
+
+if (selected_umap != preferred_umap_for_trajectory) {
+  cat("  ⚠ 首选", preferred_umap_for_trajectory, "不可用，已自动选择", selected_umap, "\n")
+}
+
+cat("\n", strrep("=", 80), "\n\n")
+```
+
+## 聚类细胞
+
+```{r cluster_cells}
+cat(strrep("=", 80), "\n")
+cat("聚类细胞（基于", selected_umap_name, "）\n")
+cat(strrep("=", 80), "\n\n")
+
+# Monocle3的cluster_cells需要指定reduction_method
+# 使用我们选择的UMAP空间
+cds <- cluster_cells(
+  cds,
+  reduction_method = selected_umap_name,
+  k = 20,                    # kNN参数
+  cluster_method = "louvain", # 或 "leiden"
+  random_seed = 42
+)
+
+cat("✓ 细胞聚类完成\n")
+
+# 查看聚类结果
+cat("\n聚类结果:\n")
+cluster_table <- table(clusters(cds))
+print(cluster_table)
+
+cat("\n分区（partition）结果:\n")
+partition_table <- table(partitions(cds))
+print(partition_table)
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 聚类完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+## 学习轨迹图
+
+```{r learn_graph}
+cat(strrep("=", 80), "\n")
+cat("学习细胞发育轨迹\n")
+cat(strrep("=", 80), "\n\n")
+
+# 基于选择的UMAP空间学习轨迹
+cds <- learn_graph(
+  cds,
+  use_partition = TRUE,           # 考虑分区信息
+  close_loop = FALSE,             # 不强制闭环
+  learn_graph_control = list(
+    minimal_branch_len = 10,      # 最小分支长度
+    geodesic_distance_ratio = 1/3  # 地理距离比例
+  )
+)
+
+cat("✓ 轨迹图学习完成\n")
+
+# 检查principal graph
+if ("principal_graph" %in% slotNames(cds@principal_graph_aux[[selected_umap_name]])) {
+  n_nodes <- nrow(cds@principal_graph_aux[[selected_umap_name]]$dp_mst)
+  cat("  主图节点数:", n_nodes, "\n")
+}
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 轨迹学习完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+## 计算伪时间
+
+```{r order_cells}
+cat(strrep("=", 80), "\n")
+cat("计算细胞伪时间\n")
+cat(strrep("=", 80), "\n\n")
+
+# ==================== 方法1: 自动选择根节点 ====================
+# 根据细胞类型推断发育起点
+
+# 定义不同模式的早期细胞类型
+early_celltype_markers <- list(
+  cDC1 = c("pre-cDC1", "early_cDC1", "CDP", "pre-DC"),
+  cDC2 = c("pre-cDC2", "early_cDC2", "CDP", "pre-DC"),
+  integrated = c("CDP", "pre-DC", "pre-cDC1", "pre-cDC2")
+)
+
+# 获取当前模式的早期标记
+if (analysis_mode %in% names(early_celltype_markers)) {
+  early_markers <- early_celltype_markers[[analysis_mode]]
+} else {
+  early_markers <- early_celltype_markers[["integrated"]]
+}
+
+cat("寻找早期细胞（根节点）...\n")
+cat("  模式:", analysis_mode, "\n")
+cat("  早期标记:", paste(early_markers, collapse = ", "), "\n")
+
+# 找到早期细胞
+early_cells <- which(colData(cds)$cell_type %in% early_markers)
+
+if (length(early_cells) > 0) {
+  cat("  找到", length(early_cells), "个早期细胞\n")
+
+  # 使用这些细胞作为起点
+  cds <- order_cells(cds, root_cells = colnames(cds)[early_cells])
+
+  cat("\n✓ 伪时间计算完成（自动根节点）\n")
+} else {
+  cat("  ⚠ 未找到匹配的早期细胞，使用交互式选择\n")
+
+  # ==================== 方法2: 交互式选择（需要在RStudio中运行）====================
+  # 注意：在Knit时无法交互，建议在Console中运行
+  # cds <- order_cells(cds)  # 会弹出图形界面让用户点击根节点
+
+  # 对于自动化分析，使用默认（不推荐）
+  cds <- order_cells(cds)
+  cat("\n✓ 伪时间计算完成（默认根节点）\n")
+}
+
+# 查看伪时间分布
+pseudotime_vals <- pseudotime(cds)
+cat("\n伪时间统计:\n")
+cat("  范围:", round(min(pseudotime_vals, na.rm = TRUE), 2), "-",
+    round(max(pseudotime_vals, na.rm = TRUE), 2), "\n")
+cat("  中位数:", round(median(pseudotime_vals, na.rm = TRUE), 2), "\n")
+cat("  NA值数量:", sum(is.na(pseudotime_vals)), "\n")
+
+# 保存伪时间结果
+pseudotime_df <- data.frame(
+  cell_id = colnames(cds),
+  pseudotime = pseudotime_vals,
+  cell_type = colData(cds)$cell_type,
+  cluster = clusters(cds),
+  partition = partitions(cds)
+)
+
+write.csv(pseudotime_df,
+          file.path(output_dir, "Tables", "pseudotime_by_cell.csv"),
+          row.names = FALSE)
+
+cat("\n✓ 伪时间结果已保存:",
+    file.path(output_dir, "Tables", "pseudotime_by_cell.csv"), "\n")
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 伪时间计算完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# 轨迹可视化（三种UMAP空间）
+
+## 准备可视化函数
+
+```{r viz_functions}
+# ==================== 自定义绘图函数 ====================
+
+#' 在指定UMAP空间绘制轨迹
+#'
+#' @param cds Monocle3 CDS对象
+#' @param reduction_name UMAP空间名称（"UMAP", "ADT_UMAP", "WNN_UMAP"）
+#' @param color_by 颜色映射变量
+#' @param title 图表标题
+plot_trajectory_on_umap <- function(cds, reduction_name, color_by = "pseudotime",
+                                    title = NULL) {
+
+  # 检查UMAP是否存在
+  if (!reduction_name %in% names(reducedDims(cds))) {
+    warning(paste(reduction_name, "不可用，跳过"))
+    return(NULL)
+  }
+
+  # 获取UMAP坐标
+  umap_coords <- reducedDims(cds)[[reduction_name]]
+
+  # 创建绘图数据框
+  plot_df <- data.frame(
+    UMAP_1 = umap_coords[, 1],
+    UMAP_2 = umap_coords[, 2],
+    cell_type = colData(cds)$cell_type,
+    pseudotime = pseudotime(cds),
+    cluster = as.factor(clusters(cds))
+  )
+
+  # 根据color_by选择颜色
+  if (color_by == "pseudotime") {
+    p <- ggplot(plot_df, aes(x = UMAP_1, y = UMAP_2, color = pseudotime)) +
+      geom_point(size = point_size, alpha = point_alpha) +
+      scale_color_viridis(option = "viridis", na.value = "grey80") +
+      labs(color = "Pseudotime")
+  } else if (color_by == "cell_type") {
+    p <- ggplot(plot_df, aes(x = UMAP_1, y = UMAP_2, color = cell_type)) +
+      geom_point(size = point_size, alpha = point_alpha) +
+      scale_color_manual(values = celltype_colors) +
+      labs(color = "Cell Type")
+  } else if (color_by == "cluster") {
+    p <- ggplot(plot_df, aes(x = UMAP_1, y = UMAP_2, color = cluster)) +
+      geom_point(size = point_size, alpha = point_alpha) +
+      scale_color_manual(values = celltype_colors) +
+      labs(color = "Cluster")
+  }
+
+  # 添加标题和主题
+  p <- p +
+    labs(
+      title = if (is.null(title)) paste("Trajectory -", reduction_name) else title,
+      x = "UMAP 1",
+      y = "UMAP 2"
+    ) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+      legend.position = "right",
+      aspect.ratio = 1
+    )
+
+  return(p)
+}
+
+
+#' 在UMAP上绘制轨迹路径（主图）
+#'
+#' @param cds Monocle3 CDS对象
+#' @param reduction_name UMAP空间名称
+#' @param color_by 颜色映射
+plot_trajectory_with_graph <- function(cds, reduction_name, color_by = "pseudotime") {
+
+  if (!reduction_name %in% names(reducedDims(cds))) {
+    return(NULL)
+  }
+
+  # 使用Monocle3的内置函数
+  p <- plot_cells(
+    cds,
+    reduction_method = reduction_name,
+    color_cells_by = color_by,
+    label_cell_groups = FALSE,
+    label_leaves = FALSE,
+    label_branch_points = FALSE,
+    graph_label_size = 3,
+    cell_size = point_size,
+    alpha = point_alpha
+  ) +
+    theme_classic() +
+    theme(
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+      legend.position = "right",
+      aspect.ratio = 1
+    )
+
+  return(p)
+}
+
+cat("✓ 可视化函数定义完成\n")
+```
+
+## RNA UMAP 空间轨迹
+
+```{r viz_rna_umap, fig.width=14, fig.height=6}
+if ("UMAP" %in% names(reducedDims(cds))) {
+
+  cat("绘制 RNA UMAP 轨迹...\n")
+
+  # 轨迹图
+  p1 <- plot_trajectory_with_graph(
+    cds,
+    reduction_name = "UMAP",
+    color_by = "pseudotime"
+  ) +
+    ggtitle("RNA UMAP - Pseudotime") +
+    scale_color_viridis(option = "viridis")
+
+  # 细胞类型图
+  p2 <- plot_trajectory_with_graph(
+    cds,
+    reduction_name = "UMAP",
+    color_by = "cell_type"
+  ) +
+    ggtitle("RNA UMAP - Cell Type")
+
+  # 组合图
+  combined <- p1 + p2
+  print(combined)
+
+  # 保存
+  ggsave(
+    file.path(output_dir, "Plots", "Trajectory", "trajectory_rna_umap.png"),
+    combined,
+    width = 14, height = 6, dpi = 300
+  )
+
+  # 单独保存伪时间图
+  ggsave(
+    file.path(output_dir, "Plots", "Trajectory", "pseudotime_rna_umap.png"),
+    p1,
+    width = 8, height = 6, dpi = 300
+  )
+
+  cat("  ✓ RNA UMAP 轨迹图已保存\n")
+
+} else {
+  cat("⚠ RNA UMAP 不可用\n")
+}
+```
+
+## ADT UMAP 空间轨迹
+
+```{r viz_adt_umap, fig.width=14, fig.height=6}
+if ("ADT_UMAP" %in% names(reducedDims(cds))) {
+
+  cat("绘制 ADT UMAP 轨迹...\n")
+
+  # 轨迹图
+  p1 <- plot_trajectory_with_graph(
+    cds,
+    reduction_name = "ADT_UMAP",
+    color_by = "pseudotime"
+  ) +
+    ggtitle("ADT UMAP - Pseudotime") +
+    scale_color_viridis(option = "magma")
+
+  # 细胞类型图
+  p2 <- plot_trajectory_with_graph(
+    cds,
+    reduction_name = "ADT_UMAP",
+    color_by = "cell_type"
+  ) +
+    ggtitle("ADT UMAP - Cell Type")
+
+  # 组合图
+  combined <- p1 + p2
+  print(combined)
+
+  # 保存
+  ggsave(
+    file.path(output_dir, "Plots", "Trajectory", "trajectory_adt_umap.png"),
+    combined,
+    width = 14, height = 6, dpi = 300
+  )
+
+  ggsave(
+    file.path(output_dir, "Plots", "Trajectory", "pseudotime_adt_umap.png"),
+    p1,
+    width = 8, height = 6, dpi = 300
+  )
+
+  cat("  ✓ ADT UMAP 轨迹图已保存\n")
+
+} else {
+  cat("⚠ ADT UMAP 不可用\n")
+}
+```
+
+## WNN UMAP 空间轨迹
+
+```{r viz_wnn_umap, fig.width=14, fig.height=6}
+if ("WNN_UMAP" %in% names(reducedDims(cds))) {
+
+  cat("绘制 WNN UMAP 轨迹...\n")
+
+  # 轨迹图
+  p1 <- plot_trajectory_with_graph(
+    cds,
+    reduction_name = "WNN_UMAP",
+    color_by = "pseudotime"
+  ) +
+    ggtitle("WNN UMAP - Pseudotime") +
+    scale_color_viridis(option = "plasma")
+
+  # 细胞类型图
+  p2 <- plot_trajectory_with_graph(
+    cds,
+    reduction_name = "WNN_UMAP",
+    color_by = "cell_type"
+  ) +
+    ggtitle("WNN UMAP - Cell Type")
+
+  # 组合图
+  combined <- p1 + p2
+  print(combined)
+
+  # 保存
+  ggsave(
+    file.path(output_dir, "Plots", "Trajectory", "trajectory_wnn_umap.png"),
+    combined,
+    width = 14, height = 6, dpi = 300
+  )
+
+  ggsave(
+    file.path(output_dir, "Plots", "Trajectory", "pseudotime_wnn_umap.png"),
+    p1,
+    width = 8, height = 6, dpi = 300
+  )
+
+  cat("  ✓ WNN UMAP 轨迹图已保存\n")
+
+} else {
+  cat("⚠ WNN UMAP 不可用\n")
+}
+```
+
+## 三空间对比图
+
+```{r viz_three_umaps, fig.width=18, fig.height=6}
+cat("生成三种UMAP空间对比图...\n")
+
+plots_list <- list()
+
+# RNA UMAP
+if ("UMAP" %in% names(reducedDims(cds))) {
+  plots_list[[length(plots_list) + 1]] <- plot_trajectory_on_umap(
+    cds, "UMAP", color_by = "pseudotime", title = "RNA UMAP"
+  )
+}
+
+# ADT UMAP
+if ("ADT_UMAP" %in% names(reducedDims(cds))) {
+  plots_list[[length(plots_list) + 1]] <- plot_trajectory_on_umap(
+    cds, "ADT_UMAP", color_by = "pseudotime", title = "ADT UMAP"
+  )
+}
+
+# WNN UMAP
+if ("WNN_UMAP" %in% names(reducedDims(cds))) {
+  plots_list[[length(plots_list) + 1]] <- plot_trajectory_on_umap(
+    cds, "WNN_UMAP", color_by = "pseudotime", title = "WNN UMAP"
+  )
+}
+
+if (length(plots_list) > 1) {
+  # 使用patchwork组合
+  combined_three <- wrap_plots(plots_list, ncol = 3)
+  print(combined_three)
+
+  ggsave(
+    file.path(output_dir, "Plots", "Trajectory", "trajectory_three_umaps_comparison.png"),
+    combined_three,
+    width = 18, height = 6, dpi = 300
+  )
+
+  cat("  ✓ 三空间对比图已保存\n")
+}
+```
+
+---
+
+# 轨迹依赖基因分析
+
+## 识别轨迹差异基因
+
+```{r find_trajectory_genes}
+cat(strrep("=", 80), "\n")
+cat("识别轨迹依赖基因\n")
+cat(strrep("=", 80), "\n\n")
+
+# 使用graph_test寻找沿轨迹变化的基因
+# 这是Monocle3推荐的方法
+
+cat("运行 graph_test 分析...\n")
+cat("  （这可能需要几分钟时间）\n\n")
+
+trajectory_genes <- graph_test(
+  cds,
+  neighbor_graph = "principal_graph",
+  cores = 4  # 使用多核加速
+)
+
+# 过滤显著基因
+sig_genes <- trajectory_genes %>%
+  filter(q_value < diff_genes_qval) %>%
+  arrange(q_value)
+
+cat("显著基因统计:\n")
+cat("  总基因数:", nrow(trajectory_genes), "\n")
+cat("  显著基因数 (q <", diff_genes_qval, "):", nrow(sig_genes), "\n")
+cat("  Top基因:", min(n_top_genes, nrow(sig_genes)), "\n")
+
+# 保存完整结果
+trajectory_genes_full <- trajectory_genes %>%
+  rownames_to_column("gene") %>%
+  arrange(q_value)
+
+write.csv(
+  trajectory_genes_full,
+  file.path(output_dir, "Tables", "trajectory_genes.csv"),
+  row.names = FALSE
+)
+
+cat("\n✓ 轨迹基因分析结果已保存:",
+    file.path(output_dir, "Tables", "trajectory_genes.csv"), "\n")
+
+# 保存到Robjects
+saveRDS(
+  sig_genes,
+  file.path(output_dir, "Robjects", "trajectory_genes.rds")
+)
+
+cat("\n", strrep("=", 80), "\n")
+cat("✓ 轨迹差异基因分析完成\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+## Top基因热图
+
+```{r heatmap_trajectory_genes, fig.width=10, fig.height=10}
+if (nrow(sig_genes) > 0) {
+
+  cat("绘制轨迹基因热图...\n")
+
+  # 选择top基因
+  top_genes <- head(sig_genes, n_top_genes)
+
+  cat("  选择", nrow(top_genes), "个基因\n")
+
+  # 提取表达矩阵
+  top_gene_names <- rownames(top_genes)
+  expr_matrix <- exprs(cds)[top_gene_names, , drop = FALSE]
+
+  # 按伪时间排序细胞
+  pseudotime_order <- order(pseudotime(cds), na.last = NA)
+
+  if (length(pseudotime_order) > 0) {
+    expr_matrix_ordered <- expr_matrix[, pseudotime_order, drop = FALSE]
+
+    # 标准化（Z-score）
+    expr_matrix_scaled <- t(scale(t(expr_matrix_ordered)))
+
+    # 创建注释
+    pseudotime_annot <- data.frame(
+      Pseudotime = pseudotime(cds)[pseudotime_order],
+      Cell_Type = colData(cds)$cell_type[pseudotime_order]
+    )
+    rownames(pseudotime_annot) <- colnames(expr_matrix_ordered)
+
+    # 绘制热图
+    pheatmap(
+      expr_matrix_scaled,
+      cluster_rows = TRUE,
+      cluster_cols = FALSE,
+      show_colnames = FALSE,
+      show_rownames = TRUE,
+      annotation_col = pseudotime_annot,
+      color = colorRampPalette(c("blue", "white", "red"))(100),
+      breaks = seq(-2, 2, length.out = 100),
+      fontsize_row = 8,
+      main = paste("Top", nrow(top_genes), "Trajectory Genes"),
+      filename = file.path(output_dir, "Plots", "Genes", "trajectory_genes_heatmap.png"),
+      width = 10,
+      height = 10
+    )
+
+    cat("  ✓ 热图已保存\n")
+  }
+
+} else {
+  cat("⚠ 没有显著的轨迹基因\n")
+}
+```
+
+## Top基因沿伪时间表达趋势
+
+```{r plot_gene_trends, fig.width=12, fig.height=8}
+if (nrow(sig_genes) > 0) {
+
+  cat("绘制基因表达趋势图...\n")
+
+  # 选择前6个基因
+  n_genes_to_plot <- min(6, nrow(sig_genes))
+  genes_to_plot <- rownames(sig_genes)[1:n_genes_to_plot]
+
+  cat("  绘制", n_genes_to_plot, "个基因:", paste(genes_to_plot, collapse = ", "), "\n")
+
+  # 使用Monocle3的plot_genes_in_pseudotime
+  p <- plot_genes_in_pseudotime(
+    cds[genes_to_plot, ],
+    color_cells_by = "cell_type",
+    min_expr = 0.1,
+    ncol = 3
+  )
+
+  print(p)
+
+  ggsave(
+    file.path(output_dir, "Plots", "Genes", "top_genes_pseudotime_trends.png"),
+    p,
+    width = 12, height = 8, dpi = 300
+  )
+
+  cat("  ✓ 趋势图已保存\n")
+}
+```
+
+---
+
+# 分析总结
+
+```{r summary}
+cat("\n", strrep("=", 80), "\n")
+cat("📊 Monocle3 轨迹分析完成总结\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("【分析配置】\n")
+cat("  模式:", analysis_mode, "\n")
+cat("  轨迹构建UMAP:", selected_umap, "(", selected_umap_name, ")\n")
+cat("  细胞数:", ncol(cds), "\n")
+cat("  基因数:", nrow(cds), "\n\n")
+
+cat("【可用UMAP空间】\n")
+for (umap_name in names(reducedDims(cds))) {
+  cat("  ✓", umap_name, "\n")
+}
+cat("\n")
+
+cat("【轨迹分析结果】\n")
+cat("  聚类数:", length(unique(clusters(cds))), "\n")
+cat("  分区数:", length(unique(partitions(cds))), "\n")
+cat("  伪时间范围:", round(min(pseudotime(cds), na.rm = TRUE), 2), "-",
+    round(max(pseudotime(cds), na.rm = TRUE), 2), "\n")
+cat("  显著轨迹基因数 (q <", diff_genes_qval, "):", nrow(sig_genes), "\n\n")
+
+cat("【输出目录】\n")
+cat("  ", output_dir, "/\n")
+cat("  ├─ Robjects/\n")
+cat("  │  ├─ cds_object.rds\n")
+cat("  │  ├─ trajectory_genes.rds\n")
+cat("  ├─ Plots/Trajectory/\n")
+n_trajectory_plots <- length(list.files(file.path(output_dir, "Plots", "Trajectory")))
+cat("  │  └─", n_trajectory_plots, "个轨迹图\n")
+cat("  ├─ Plots/Genes/\n")
+n_gene_plots <- length(list.files(file.path(output_dir, "Plots", "Genes")))
+cat("  │  └─", n_gene_plots, "个基因图\n")
+cat("  └─ Tables/\n")
+cat("     ├─ trajectory_genes.csv\n")
+cat("     └─ pseudotime_by_cell.csv\n\n")
+
+cat("【下一步分析建议】\n")
+cat("  1. RNA Velocity 分析 (6.rna_velocity_analysis.Rmd)\n")
+cat("  2. CellOracle 基因调控网络 (7.celloracle_grn_analysis.py)\n")
+cat("  3. scTenifoldKnk 扰动分析 (8.sctenifoldknk_perturbation.Rmd)\n\n")
+
+cat(strrep("=", 80), "\n")
+cat("✅ 分析完成！\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+---
+
+# Session Info
+
+```{r session_info}
+sessionInfo()
+```
