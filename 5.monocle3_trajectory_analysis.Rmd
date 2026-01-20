@@ -681,10 +681,12 @@ cds <- learn_graph(
 
 cat("✓ 轨迹图学习完成\n")
 
-# 检查principal graph
-if ("principal_graph" %in% slotNames(cds@principal_graph_aux[[selected_umap_name]])) {
-  n_nodes <- nrow(cds@principal_graph_aux[[selected_umap_name]]$dp_mst)
-  cat("  主图节点数:", n_nodes, "\n")
+# 检查principal graph（使用标准 "UMAP" 名称）
+if ("UMAP" %in% names(cds@principal_graph_aux)) {
+  if (!is.null(cds@principal_graph_aux[["UMAP"]]$dp_mst)) {
+    n_nodes <- nrow(cds@principal_graph_aux[["UMAP"]]$dp_mst)
+    cat("  主图节点数:", n_nodes, "\n")
+  }
 }
 
 cat("\n", strrep("=", 80), "\n")
@@ -1090,7 +1092,7 @@ cat(strrep("=", 80), "\n\n")
 
 cat("【分析配置】\n")
 cat("  模式:", analysis_mode, "\n")
-cat("  轨迹构建UMAP:", selected_umap, "(", selected_umap_name, ")\n")
+cat("  轨迹构建UMAP:", selected_umap_label, "\n")
 cat("  细胞数:", ncol(cds), "\n")
 cat("  基因数:", nrow(cds), "\n\n")
 
