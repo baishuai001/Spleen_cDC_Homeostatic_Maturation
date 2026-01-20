@@ -1081,8 +1081,8 @@ cat(sprintf("绘制 %s UMAP 轨迹图...\n", selected_umap_label))
 # 轨迹图（伪时间）
 p1 <- plot_trajectory_with_graph(
   cds,
-  reduction_method = "UMAP",  # 使用标准名称 ⭐
-  color_cells_by = "pseudotime"
+  reduction_name = "UMAP",  # 使用标准名称 ⭐
+  color_by = "pseudotime"
 ) +
   ggtitle(sprintf("%s UMAP - Pseudotime", selected_umap_label)) +
   scale_color_viridis(option = "viridis")
@@ -1090,8 +1090,8 @@ p1 <- plot_trajectory_with_graph(
 # 细胞类型图
 p2 <- plot_trajectory_with_graph(
   cds,
-  reduction_method = "UMAP",  # 使用标准名称 ⭐
-  color_cells_by = "cell_type"
+  reduction_name = "UMAP",  # 使用标准名称 ⭐
+  color_by = "cell_type"
 ) +
   ggtitle(sprintf("%s UMAP - Cell Type", selected_umap_label))
 
