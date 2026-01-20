@@ -647,14 +647,46 @@ cds <- cluster_cells(
 
 cat("✓ 细胞聚类完成\n")
 
-# 查看聚类结果
+# 查看聚类结果（安全访问）
 cat("\n聚类结果:\n")
-cluster_table <- table(clusters(cds))
-print(cluster_table)
+cluster_vals <- tryCatch(
+  clusters(cds),
+  error = function(e) {
+    if ("clusters" %in% colnames(colData(cds))) {
+      return(colData(cds)$clusters)
+    } else {
+      return(NULL)
+    }
+  }
+)
+
+if (!is.null(cluster_vals) && length(cluster_vals) > 0) {
+  cluster_table <- table(cluster_vals)
+  print(cluster_table)
+  cat("  聚类数:", length(unique(cluster_vals)), "\n")
+} else {
+  cat("  ⚠ 无法获取聚类信息\n")
+}
 
 cat("\n分区（partition）结果:\n")
-partition_table <- table(partitions(cds))
-print(partition_table)
+partition_vals <- tryCatch(
+  partitions(cds),
+  error = function(e) {
+    if ("partitions" %in% colnames(colData(cds))) {
+      return(colData(cds)$partitions)
+    } else {
+      return(NULL)
+    }
+  }
+)
+
+if (!is.null(partition_vals) && length(partition_vals) > 0) {
+  partition_table <- table(partition_vals)
+  print(partition_table)
+  cat("  分区数:", length(unique(partition_vals)), "\n")
+} else {
+  cat("  ⚠ 无法获取分区信息\n")
+}
 
 cat("\n", strrep("=", 80), "\n")
 cat("✓ 聚类完成\n")
@@ -753,12 +785,44 @@ cat("  中位数:", round(median(pseudotime_vals, na.rm = TRUE), 2), "\n")
 cat("  NA值数量:", sum(is.na(pseudotime_vals)), "\n")
 
 # 保存伪时间结果
+# 安全地提取聚类和分区信息（兼容不同的 CDS 对象结构）
+cluster_info <- tryCatch(
+  as.character(clusters(cds)),
+  error = function(e) {
+    if ("clusters" %in% colnames(colData(cds))) {
+      return(colData(cds)$clusters)
+    } else {
+      return(rep(NA, ncol(cds)))
+    }
+  }
+)
+
+partition_info <- tryCatch(
+  as.character(partitions(cds)),
+  error = function(e) {
+    if ("partitions" %in% colnames(colData(cds))) {
+      return(colData(cds)$partitions)
+    } else {
+      return(rep(NA, ncol(cds)))
+    }
+  }
+)
+
+# 确保向量长度一致
+if (length(cluster_info) == 0) {
+  cluster_info <- rep(NA, ncol(cds))
+}
+if (length(partition_info) == 0) {
+  partition_info <- rep(NA, ncol(cds))
+}
+
 pseudotime_df <- data.frame(
   cell_id = colnames(cds),
   pseudotime = pseudotime_vals,
   cell_type = colData(cds)$cell_type,
-  cluster = clusters(cds),
-  partition = partitions(cds)
+  cluster = cluster_info,
+  partition = partition_info,
+  stringsAsFactors = FALSE
 )
 
 write.csv(pseudotime_df,
@@ -800,13 +864,29 @@ plot_trajectory_on_umap <- function(cds, reduction_name, color_by = "pseudotime"
   # 获取UMAP坐标
   umap_coords <- reducedDims(cds)[[reduction_name]]
 
+  # 安全获取聚类信息
+  cluster_vals <- tryCatch(
+    as.factor(clusters(cds)),
+    error = function(e) {
+      if ("clusters" %in% colnames(colData(cds))) {
+        return(as.factor(colData(cds)$clusters))
+      } else {
+        return(factor(rep("Unknown", ncol(cds))))
+      }
+    }
+  )
+
+  if (length(cluster_vals) == 0) {
+    cluster_vals <- factor(rep("Unknown", ncol(cds)))
+  }
+
   # 创建绘图数据框
   plot_df <- data.frame(
     UMAP_1 = umap_coords[, 1],
     UMAP_2 = umap_coords[, 2],
     cell_type = colData(cds)$cell_type,
     pseudotime = pseudotime(cds),
-    cluster = as.factor(clusters(cds))
+    cluster = cluster_vals
   )
 
   # 根据color_by选择颜色
@@ -1103,8 +1183,40 @@ for (umap_name in names(reducedDims(cds))) {
 cat("\n")
 
 cat("【轨迹分析结果】\n")
-cat("  聚类数:", length(unique(clusters(cds))), "\n")
-cat("  分区数:", length(unique(partitions(cds))), "\n")
+
+# 安全获取聚类和分区数量
+cluster_count <- tryCatch({
+  length(unique(clusters(cds)))
+}, error = function(e) {
+  if ("clusters" %in% colnames(colData(cds))) {
+    return(length(unique(colData(cds)$clusters)))
+  } else {
+    return(NA)
+  }
+})
+
+partition_count <- tryCatch({
+  length(unique(partitions(cds)))
+}, error = function(e) {
+  if ("partitions" %in% colnames(colData(cds))) {
+    return(length(unique(colData(cds)$partitions)))
+  } else {
+    return(NA)
+  }
+})
+
+if (!is.na(cluster_count)) {
+  cat("  聚类数:", cluster_count, "\n")
+} else {
+  cat("  聚类数: N/A\n")
+}
+
+if (!is.na(partition_count)) {
+  cat("  分区数:", partition_count, "\n")
+} else {
+  cat("  分区数: N/A\n")
+}
+
 cat("  伪时间范围:", round(min(pseudotime(cds), na.rm = TRUE), 2), "-",
     round(max(pseudotime(cds), na.rm = TRUE), 2), "\n")
 cat("  显著轨迹基因数 (q <", diff_genes_qval, "):", nrow(sig_genes), "\n\n")
