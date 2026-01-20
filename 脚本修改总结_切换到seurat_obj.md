@@ -116,94 +116,76 @@ cds <- cluster_cells(
 
 ---
 
-## ⚠️ 剩余问题和待修复部分
+## ✅ 可视化部分修复完成（方案A：简化）
 
 ### 1. 可视化部分（5.monocle3_trajectory_analysis.Rmd）
 
-**问题**：脚本中有 ADT UMAP、WNN UMAP、三空间对比图的代码块，它们使用了 `plot_cells()` 函数，该函数也要求 `reduction_method` 是标准名称。
+**解决方案**：已采用方案A（简化可视化），移除了会导致错误的代码块。
 
 **当前状态**：
-- 主要轨迹可视化（基于选择的 UMAP）：✅ 已修复
-- ADT UMAP 轨迹图：❌ 会报错（第874-920行）
-- WNN UMAP 轨迹图：❌ 会报错（第922-968行）
-- 三空间对比图：❌ 会报错（第970-1000行）
+- 主要轨迹可视化（基于选择的 UMAP）：✅ 已修复，正常工作
+- ADT UMAP 轨迹图：✅ 已移除（避免 reduction_method 错误）
+- WNN UMAP 轨迹图：✅ 已移除（避免 reduction_method 错误）
+- 三空间对比图：✅ 已移除（避免 reduction_method 错误）
 
-**解决方案**：
+**修改说明**：
+- 删除了原 874-1011 行的多 UMAP 对比可视化代码
+- 添加了注释说明移除原因
+- 脚本现在只显示用户通过 `preferred_umap_for_trajectory` 参数选择的 UMAP 空间轨迹
+- 如需对比多个 UMAP 空间，可使用整合脚本（5.trajectory_analysis_integrated.Rmd）
 
-#### 方案A：删除这些代码块（最简单）
-只保留主要的轨迹图（基于用户选择的 UMAP），删除其他空间的单独可视化。
+**已实施解决方案：方案A（简化可视化）✅**
 
-#### 方案B：使用自定义绘图函数（保留功能）
+已删除多 UMAP 对比可视化代码块，只保留主要的轨迹图（基于用户选择的 UMAP）。
+
+#### 其他可选方案（未实施，仅供参考）
+
+如果将来需要恢复多空间对比功能，可考虑：
+
+**方案B：使用自定义绘图函数**
 不使用 `plot_cells()`，而是使用自定义的 `plot_trajectory_on_umap()` 函数（该函数不调用 Monocle3 API，直接用 ggplot2 绘图）。
 
-```r
-# 示例：使用自定义函数绘制多个 UMAP
-plots_list <- list()
+**注意**：自定义函数绘制的图**不会显示轨迹曲线**（principal graph），只显示伪时间分布。
 
-if ("RNA_UMAP" %in% names(reducedDims(cds))) {
-  plots_list[[1]] <- plot_trajectory_on_umap(cds, "RNA_UMAP", "pseudotime")
-}
-if ("ADT_UMAP" %in% names(reducedDims(cds))) {
-  plots_list[[2]] <- plot_trajectory_on_umap(cds, "ADT_UMAP", "pseudotime")
-}
-if ("WNN_UMAP" %in% names(reducedDims(cds))) {
-  plots_list[[3]] <- plot_trajectory_on_umap(cds, "WNN_UMAP", "pseudotime")
-}
-
-combined <- wrap_plots(plots_list, ncol = 3)
-```
-
-**注意**：自定义函数绘制的图**不会显示轨迹曲线**（principal graph），只显示伪时间分布。如果需要轨迹曲线，必须使用 Monocle3 的 `plot_cells()`，而这要求 `reduction_method = "UMAP"`（标准名称）。
-
-#### 方案C：为每个 UMAP 创建临时 CDS（最完整，但复杂）
-为每个 UMAP 空间创建一个临时的 CDS 对象，将该 UMAP 重命名为 "UMAP"，然后调用 `plot_cells()`：
-
-```r
-# 绘制 WNN UMAP 轨迹（带曲线）
-if ("WNN_UMAP" %in% names(reducedDims(cds))) {
-  # 创建临时 CDS
-  cds_temp <- cds
-  reducedDims(cds_temp)[["UMAP"]] <- reducedDims(cds)[["WNN_UMAP"]]
-
-  # 使用标准名称绘图
-  p <- plot_cells(cds_temp, reduction_method = "UMAP", ...)
-
-  # 保存
-  ggsave("trajectory_wnn_umap.png", p)
-}
-```
+**方案C：为每个 UMAP 创建临时 CDS**
+为每个 UMAP 空间创建临时的 CDS 对象，将该 UMAP 重命名为 "UMAP"，然后调用 `plot_cells()`。
 
 ### 2. 整合脚本（5.trajectory_analysis_integrated.Rmd）
 
-**状态**：尚未修改
+**状态**：⏳ 待修改（下一步）
 
 **需要修改**：
 - 数据加载逻辑（切换到 `seurat_obj_annotated.rds`）
-- Monocle3 CDS 构建
+- Monocle3 CDS 构建（使用 SeuratWrappers）
 - Slingshot 输入准备（从 Seurat 对象提取）
-- UMAP 命名问题（与单一脚本相同）
+- UMAP 命名问题（与单一脚本相同的修复方法）
+- 可视化部分简化（应用方案A）
 
 ---
 
-## 🎯 推荐行动方案
+## 🎯 实施进度
 
-### 立即行动（用户选择）
+### ✅ 已完成
 
-**选项1：简化版本（推荐，快速可用）⭐**
-- 删除会报错的 ADT/WNN/三空间对比可视化代码块
-- 只保留基于用户选择的主要 UMAP 轨迹图
-- **优势**：立即可用，无报错
-- **劣势**：失去多空间对比功能
+1. **单一脚本（5.monocle3_trajectory_analysis.Rmd）修复完成**
+   - ✅ 数据加载切换到 seurat_obj_annotated.rds
+   - ✅ 使用 SeuratWrappers 转换
+   - ✅ UMAP 命名问题修复（复制为标准 "UMAP"）
+   - ✅ 聚类函数修复（使用标准名称）
+   - ✅ 可视化简化（方案A：删除多 UMAP 对比代码）
 
-**选项2：完整版本（耗时，功能完整）**
-- 使用方案B或C修复所有可视化代码块
-- 保留多空间对比功能
-- **优势**：功能完整，可对比三种 UMAP
-- **劣势**：需要更多时间修改和测试
+### ⏳ 下一步
 
-### 对于整合脚本
+2. **整合脚本（5.trajectory_analysis_integrated.Rmd）待修复**
+   - ⏳ 应用相同的数据加载逻辑
+   - ⏳ Monocle3 部分修复
+   - ⏳ Slingshot 部分修复
+   - ⏳ 可视化简化（方案A）
 
-**建议**：先修复单一脚本（5.monocle3），验证可用后，再同样修改整合脚本（5.integrated）。
+3. **测试与验证**
+   - ⏳ 运行修复后的单一脚本（cDC1/cDC2/integrated 三种模式）
+   - ⏳ 验证轨迹清晰可见
+   - ⏳ 运行整合脚本进行正式分析
 
 ---
 
@@ -313,17 +295,25 @@ reducedDims(cds)[["WNN_UMAP"]] <- reducedDims(cds)[[selected_umap_source]]
 
 ---
 
-## ✅ 测试清单
+## ✅ 测试清单（5.monocle3_trajectory_analysis.Rmd）
 
-修改完成后，请测试：
+单一脚本修改完成，待测试：
 
 - [ ] 脚本能找到 `seurat_obj_annotated.rds`
 - [ ] SeuratWrappers 成功转换
 - [ ] UMAP 空间选择正确（根据 `preferred_umap_for_trajectory`）
-- [ ] `cluster_cells()` 不报错
+- [ ] `cluster_cells()` 不报错（使用标准 "UMAP" 名称）
 - [ ] `learn_graph()` 正常运行
-- [ ] 主要轨迹图生成成功
-- [ ] （可选）多空间对比图正常
+- [ ] 主要轨迹图生成成功（基于选择的 UMAP）
+- [ ] 轨迹依赖基因分析正常
+- [ ] 无 reduction_method 相关错误
+
+## ⏳ 整合脚本测试清单（待修复后）
+
+- [ ] Monocle3 和 Slingshot 都能正常运行
+- [ ] 两种方法的轨迹对比图生成
+- [ ] 伪时间相关性分析完成
+- [ ] 差异基因重叠分析完成
 
 ---
 
@@ -336,8 +326,13 @@ reducedDims(cds)[["WNN_UMAP"]] <- reducedDims(cds)[[selected_umap_source]]
 ---
 
 **创建时间**：2026-01-20
-**修改脚本**：
-- 5.monocle3_trajectory_analysis.Rmd（部分完成）
-- 5.trajectory_analysis_integrated.Rmd（待修改）
+**最后更新**：2026-01-20
 
-**下一步**：用户选择修复方案（简化版 vs 完整版）
+**修改脚本状态**：
+- ✅ 5.monocle3_trajectory_analysis.Rmd（已完成 - 方案A简化版本）
+- ⏳ 5.trajectory_analysis_integrated.Rmd（待修改）
+
+**下一步**：
+1. 修复整合脚本（5.trajectory_analysis_integrated.Rmd）
+2. 测试单一脚本（三种模式：cDC1, cDC2, integrated）
+3. 验证轨迹分析结果

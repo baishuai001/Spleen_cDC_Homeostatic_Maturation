@@ -234,7 +234,8 @@ cat("加载轨迹分析输入数据\n")
 cat(strrep("=", 80), "\n\n")
 
 # ==================== 第一步：确定分析模式和查找输入文件 ====================
-# 正确的路径结构：data/{mode}/Robjects/data_for_monocle3.rds
+# 路径结构：data/{mode}/Robjects/seurat_obj_annotated.rds（新方案，优先）
+#           data/{mode}/Robjects/data_for_monocle3.rds（旧方案，备用）
 
 # 构建可能的输入路径（按优先级）
 possible_modes <- c(default_analysis_mode, "cDC1", "cDC2", "integrated")
@@ -242,21 +243,42 @@ possible_modes <- unique(possible_modes)  # 去重
 
 input_file <- NULL
 detected_mode <- NULL
+file_basename <- NULL
 
-cat("搜索输入文件...\n")
+cat("搜索 Seurat 对象...\n")
 
-# 优先搜索：data/{mode}/Robjects/data_for_monocle3.rds（正确的上游输出位置）
+# ⭐ 优先搜索：seurat_obj_annotated.rds（新方案）
 for (mode in possible_modes) {
-  path <- file.path(base_dir, "data", mode, "Robjects", "data_for_monocle3.rds")
-  cat(sprintf("  检查: data/%s/Robjects/data_for_monocle3.rds ... ", mode))
+  path <- file.path(base_dir, "data", mode, "Robjects", "seurat_obj_annotated.rds")
+  cat(sprintf("  检查: data/%s/Robjects/seurat_obj_annotated.rds ... ", mode))
 
   if (file.exists(path)) {
     input_file <- path
     detected_mode <- mode
+    file_basename <- basename(path)
     cat("✓ 找到\n")
     break
   } else {
     cat("✗\n")
+  }
+}
+
+# 备用搜索：data_for_monocle3.rds（向后兼容）
+if (is.null(input_file)) {
+  cat("\n尝试旧格式（data_for_monocle3.rds）...\n")
+  for (mode in possible_modes) {
+    path <- file.path(base_dir, "data", mode, "Robjects", "data_for_monocle3.rds")
+    cat(sprintf("  检查: data/%s/Robjects/data_for_monocle3.rds ... ", mode))
+
+    if (file.exists(path)) {
+      input_file <- path
+      detected_mode <- mode
+      file_basename <- basename(path)
+      cat("✓ 找到\n")
+      break
+    } else {
+      cat("✗\n")
+    }
   }
 }
 
@@ -283,32 +305,64 @@ if (is.null(input_file)) {
 
 # 如果仍未找到，报错并提示正确路径
 if (is.null(input_file)) {
-  stop("\n❌ 未找到 data_for_monocle3.rds！\n\n",
+  stop("\n❌ 未找到输入文件！\n\n",
        "请确保文件位于以下位置之一：\n",
-       "  推荐位置（来自4.downstream_analysis.Rmd输出）：\n",
+       "  推荐位置（新方案 - 来自4.downstream_analysis.Rmd输出）：\n",
+       sprintf("    - data/cDC1/Robjects/seurat_obj_annotated.rds\n"),
+       sprintf("    - data/cDC2/Robjects/seurat_obj_annotated.rds\n"),
+       sprintf("    - data/integrated/Robjects/seurat_obj_annotated.rds\n"),
+       "\n  或旧格式（备用）：\n",
        sprintf("    - data/cDC1/Robjects/data_for_monocle3.rds\n"),
        sprintf("    - data/cDC2/Robjects/data_for_monocle3.rds\n"),
        sprintf("    - data/integrated/Robjects/data_for_monocle3.rds\n"),
-       "\n  或备用位置：\n",
+       "\n  或其他备用位置：\n",
        sprintf("    - trajectory_analysis_%s/data/data_for_monocle3.rds\n", default_analysis_mode))
 }
 
 cat("\n✓ 输入文件:", input_file, "\n")
+cat("  文件类型:", file_basename, "\n")
 cat("  检测到的模式:", detected_mode, "\n")
 
 # ==================== 第二步：加载数据并验证模式 ====================
-data_obj <- readRDS(input_file)
 
-# 获取数据中的分析模式
-if (!is.null(data_obj$analysis_mode)) {
-  data_mode <- data_obj$analysis_mode
-  cat("  数据中的模式:", data_mode, "\n")
+# 智能加载：根据文件类型选择加载方式
+if (grepl("seurat_obj_annotated", file_basename, ignore.case = TRUE)) {
+  # 新方案：加载 Seurat 对象
+  cat("\n加载 Seurat 对象...\n")
+  seurat_obj <- readRDS(input_file)
+
+  # 从 Seurat 对象提取分析模式
+  if ("analysis_mode" %in% colnames(seurat_obj@meta.data)) {
+    data_mode <- unique(seurat_obj@meta.data$analysis_mode)[1]
+  } else if ("orig.ident" %in% colnames(seurat_obj@meta.data)) {
+    data_mode <- detected_mode
+  } else {
+    data_mode <- NULL
+  }
+
+  cat("✓ Seurat 对象加载完成\n")
+  cat("  细胞数:", ncol(seurat_obj), "\n")
+  cat("  基因数:", nrow(seurat_obj), "\n")
+  if (!is.null(data_mode)) {
+    cat("  数据中的模式:", data_mode, "\n")
+  }
+
 } else {
-  data_mode <- NULL
-  cat("  ⚠ 数据中未指定模式\n")
+  # 旧方案：加载 data_for_monocle3.rds
+  cat("\n加载旧格式数据...\n")
+  data_obj <- readRDS(input_file)
+
+  # 获取数据中的分析模式
+  if (!is.null(data_obj$analysis_mode)) {
+    data_mode <- data_obj$analysis_mode
+    cat("  数据中的模式:", data_mode, "\n")
+  } else {
+    data_mode <- NULL
+    cat("  ⚠ 数据中未指定模式\n")
+  }
 }
 
-# 确定最终使用的分析模式
+# ==================== 第三步：确定最终使用的分析模式 ====================
 if (!is.null(data_mode)) {
   # 优先使用数据中的模式
   analysis_mode <- data_mode
@@ -331,7 +385,7 @@ if (!is.null(data_mode)) {
   }
 }
 
-# ==================== 第三步：根据最终模式设置输出目录 ====================
+# ==================== 第四步：根据最终模式设置输出目录 ====================
 output_dir <- file.path(base_dir, paste0("trajectory_analysis_", analysis_mode))
 
 # 创建输出目录
@@ -344,29 +398,97 @@ dir.create(file.path(output_dir, "Tables"), showWarnings = FALSE, recursive = TR
 
 cat("\n输出目录:", output_dir, "\n")
 
-# 数据检查
-cat("\n数据组件:\n")
-required_components <- c("counts", "normalized", "metadata", "umap", "cell_type")
-for (comp in required_components) {
-  status <- if (comp %in% names(data_obj)) "✓" else "✗"
-  cat(sprintf("  %s %s\n", status, comp))
-}
+# ==================== 第五步：数据检查 ====================
+cat("\n数据概览:\n")
 
-# 检查UMAP空间
-cat("\nUMAP空间:\n")
-for (umap_type in c("umap", "adt_umap", "wnn_umap")) {
-  if (umap_type %in% names(data_obj)) {
-    cat(sprintf("  ✓ %s\n", umap_type))
-  } else {
-    cat(sprintf("  ○ %s (不可用)\n", umap_type))
+if (exists("seurat_obj")) {
+  # 新方案：Seurat 对象
+  cat("  数据格式: Seurat 对象\n")
+  cat("  细胞数:", ncol(seurat_obj), "\n")
+  cat("  基因数:", nrow(seurat_obj), "\n")
+  cat("  细胞类型数:", length(unique(seurat_obj@meta.data$cell_type)), "\n")
+
+  # 检查UMAP空间
+  cat("\nUMAP空间:\n")
+  if ("umap" %in% names(seurat_obj@reductions)) {
+    cat("  ✓ RNA UMAP\n")
+  }
+  if ("adt_umap" %in% names(seurat_obj@reductions) || "adt.umap" %in% names(seurat_obj@reductions)) {
+    cat("  ✓ ADT UMAP\n")
+  }
+  if ("wnn_umap" %in% names(seurat_obj@reductions) || "wnn.umap" %in% names(seurat_obj@reductions)) {
+    cat("  ✓ WNN UMAP\n")
+  }
+
+} else if (exists("data_obj")) {
+  # 旧方案：data_for_monocle3 格式
+  cat("  数据格式: data_for_monocle3\n")
+  cat("  细胞数:", ncol(data_obj$counts), "\n")
+  cat("  基因数:", nrow(data_obj$counts), "\n")
+  cat("  细胞类型数:", length(unique(data_obj$cell_type)), "\n")
+
+  # 检查UMAP空间
+  cat("\nUMAP空间:\n")
+  for (umap_type in c("umap", "adt_umap", "wnn_umap")) {
+    if (umap_type %in% names(data_obj)) {
+      cat(sprintf("  ✓ %s\n", umap_type))
+    } else {
+      cat(sprintf("  ○ %s (不可用)\n", umap_type))
+    }
   }
 }
 
-cat("\n数据概览:\n")
-cat("  细胞数:", ncol(data_obj$counts), "\n")
-cat("  基因数:", nrow(data_obj$counts), "\n")
-cat("  细胞类型数:", length(unique(data_obj$cell_type)), "\n\n")
+# ==================== 第六步：创建兼容层（统一数据访问接口）====================
+# 为了兼容后续代码，创建统一的数据访问结构
 
+if (exists("seurat_obj") && !exists("data_obj")) {
+  cat("\n创建数据兼容层...\n")
+
+  # 创建类似 data_for_monocle3 结构的对象，供后续代码使用
+  data_obj <- list()
+
+  # 提取表达矩阵
+  data_obj$counts <- GetAssayData(seurat_obj, slot = "counts", assay = "RNA")
+  data_obj$normalized <- GetAssayData(seurat_obj, slot = "data", assay = "RNA")
+
+  # 提取元数据
+  data_obj$metadata <- seurat_obj@meta.data
+  data_obj$cell_type <- seurat_obj@meta.data$cell_type
+
+  # 提取 UMAP 坐标（从降维对象）
+  if ("umap" %in% names(seurat_obj@reductions)) {
+    data_obj$umap <- Embeddings(seurat_obj, reduction = "umap")
+  }
+
+  if ("adt_umap" %in% names(seurat_obj@reductions)) {
+    data_obj$adt_umap <- Embeddings(seurat_obj, reduction = "adt_umap")
+  } else if ("adt.umap" %in% names(seurat_obj@reductions)) {
+    data_obj$adt_umap <- Embeddings(seurat_obj, reduction = "adt.umap")
+  }
+
+  if ("wnn_umap" %in% names(seurat_obj@reductions)) {
+    data_obj$wnn_umap <- Embeddings(seurat_obj, reduction = "wnn_umap")
+  } else if ("wnn.umap" %in% names(seurat_obj@reductions)) {
+    data_obj$wnn_umap <- Embeddings(seurat_obj, reduction = "wnn.umap")
+  }
+
+  # 提取 PCA（如果存在）
+  if ("pca" %in% names(seurat_obj@reductions)) {
+    data_obj$pca <- Embeddings(seurat_obj, reduction = "pca")
+  }
+
+  # 添加分析模式
+  if (!is.null(data_mode)) {
+    data_obj$analysis_mode <- data_mode
+  }
+
+  cat("✓ 数据兼容层创建完成\n")
+  cat("  - 表达矩阵已提取\n")
+  cat("  - UMAP 坐标已提取\n")
+  cat("  - 元数据已提取\n")
+}
+
+cat("\n")
 cat(strrep("=", 80), "\n")
 cat("✓ 数据加载完成\n")
 cat(strrep("=", 80), "\n\n")
@@ -383,63 +505,86 @@ cat(strrep("=", 80), "\n")
 cat("【Monocle3】构建 CellDataSet 对象\n")
 cat(strrep("=", 80), "\n\n")
 
-# 准备表达矩阵
-expr_matrix <- data_obj$normalized
-if (!inherits(expr_matrix, "dgCMatrix")) {
-  expr_matrix <- as(as.matrix(expr_matrix), "dgCMatrix")
-}
+if (exists("seurat_obj")) {
+  # ⭐ 新方案：使用 SeuratWrappers 转换
+  cat("使用 SeuratWrappers 转换 Seurat 对象...\n")
 
-# 准备基因注释
-gene_metadata <- data.frame(
-  gene_short_name = rownames(expr_matrix),
-  row.names = rownames(expr_matrix)
-)
+  # 加载 SeuratWrappers（如果未加载）
+  if (!requireNamespace("SeuratWrappers", quietly = TRUE)) {
+    stop("需要安装 SeuratWrappers 包：remotes::install_github('satijalab/seurat-wrappers')")
+  }
+  library(SeuratWrappers)
 
-# 准备细胞注释
-cell_metadata <- data_obj$metadata
-if (!"cell_type" %in% colnames(cell_metadata)) {
-  cell_metadata$cell_type <- data_obj$cell_type
-}
+  # 转换为 CDS
+  cds <- as.cell_data_set(seurat_obj)
 
-# 添加UMAP坐标到metadata
-if ("umap" %in% names(data_obj)) {
-  cell_metadata$UMAP_1 <- data_obj$umap[, 1]
-  cell_metadata$UMAP_2 <- data_obj$umap[, 2]
-}
-if ("adt_umap" %in% names(data_obj)) {
-  cell_metadata$ADT_UMAP_1 <- data_obj$adt_umap[, 1]
-  cell_metadata$ADT_UMAP_2 <- data_obj$adt_umap[, 2]
-}
-if ("wnn_umap" %in% names(data_obj)) {
-  cell_metadata$WNN_UMAP_1 <- data_obj$wnn_umap[, 1]
-  cell_metadata$WNN_UMAP_2 <- data_obj$wnn_umap[, 2]
-}
+  cat("✓ Seurat 对象已转换为 CellDataSet\n")
+  cat("  细胞数:", ncol(cds), "\n")
+  cat("  基因数:", nrow(cds), "\n")
+  cat("  原始降维空间:", paste(names(reducedDims(cds)), collapse = ", "), "\n\n")
 
-# 创建CDS对象
-cds <- new_cell_data_set(
-  expression_data = expr_matrix,
-  cell_metadata = cell_metadata,
-  gene_metadata = gene_metadata
-)
+} else if (exists("data_obj")) {
+  # 旧方案：手动构建 CDS（向后兼容）
+  cat("使用传统方法构建 CDS 对象...\n")
 
-# 添加降维结果
-if ("pca" %in% names(data_obj)) {
-  reducedDims(cds)[["PCA"]] <- data_obj$pca
-}
-if ("umap" %in% names(data_obj)) {
-  reducedDims(cds)[["UMAP"]] <- data_obj$umap
-}
-if ("adt_umap" %in% names(data_obj)) {
-  reducedDims(cds)[["ADT_UMAP"]] <- data_obj$adt_umap
-}
-if ("wnn_umap" %in% names(data_obj)) {
-  reducedDims(cds)[["WNN_UMAP"]] <- data_obj$wnn_umap
-}
+  # 准备表达矩阵
+  expr_matrix <- data_obj$normalized
+  if (!inherits(expr_matrix, "dgCMatrix")) {
+    expr_matrix <- as(as.matrix(expr_matrix), "dgCMatrix")
+  }
 
-cat("✓ CDS对象创建完成\n")
-cat("  细胞数:", ncol(cds), "\n")
-cat("  基因数:", nrow(cds), "\n")
-cat("  降维空间:", paste(names(reducedDims(cds)), collapse = ", "), "\n\n")
+  # 准备基因注释
+  gene_metadata <- data.frame(
+    gene_short_name = rownames(expr_matrix),
+    row.names = rownames(expr_matrix)
+  )
+
+  # 准备细胞注释
+  cell_metadata <- data_obj$metadata
+  if (!"cell_type" %in% colnames(cell_metadata)) {
+    cell_metadata$cell_type <- data_obj$cell_type
+  }
+
+  # 添加UMAP坐标到metadata
+  if ("umap" %in% names(data_obj)) {
+    cell_metadata$UMAP_1 <- data_obj$umap[, 1]
+    cell_metadata$UMAP_2 <- data_obj$umap[, 2]
+  }
+  if ("adt_umap" %in% names(data_obj)) {
+    cell_metadata$ADT_UMAP_1 <- data_obj$adt_umap[, 1]
+    cell_metadata$ADT_UMAP_2 <- data_obj$adt_umap[, 2]
+  }
+  if ("wnn_umap" %in% names(data_obj)) {
+    cell_metadata$WNN_UMAP_1 <- data_obj$wnn_umap[, 1]
+    cell_metadata$WNN_UMAP_2 <- data_obj$wnn_umap[, 2]
+  }
+
+  # 创建CDS对象
+  cds <- new_cell_data_set(
+    expression_data = expr_matrix,
+    cell_metadata = cell_metadata,
+    gene_metadata = gene_metadata
+  )
+
+  # 添加降维结果
+  if ("pca" %in% names(data_obj)) {
+    reducedDims(cds)[["PCA"]] <- data_obj$pca
+  }
+  if ("umap" %in% names(data_obj)) {
+    reducedDims(cds)[["UMAP"]] <- data_obj$umap
+  }
+  if ("adt_umap" %in% names(data_obj)) {
+    reducedDims(cds)[["ADT_UMAP"]] <- data_obj$adt_umap
+  }
+  if ("wnn_umap" %in% names(data_obj)) {
+    reducedDims(cds)[["WNN_UMAP"]] <- data_obj$wnn_umap
+  }
+
+  cat("✓ CDS对象创建完成\n")
+  cat("  细胞数:", ncol(cds), "\n")
+  cat("  基因数:", nrow(cds), "\n")
+  cat("  降维空间:", paste(names(reducedDims(cds)), collapse = ", "), "\n\n")
+}
 
 cat(strrep("=", 80), "\n\n")
 ```
@@ -486,17 +631,87 @@ if (selected_umap_monocle3 != preferred_umap) {
   cat("  ⚠ 首选", preferred_umap, "不可用，已降级\n")
 }
 cat("\n")
+
+# ⭐ 关键修复：Monocle3 只接受标准 reduction_method 名称
+# 将选择的 UMAP 复制为标准 "UMAP" 名称
+cat("整理 UMAP 降维空间...\n")
+
+# 检测并规范化 UMAP 名称（处理 SeuratWrappers 转换的命名差异）
+has_wnn_umap <- "WNN_UMAP" %in% names(reducedDims(cds)) ||
+                "wnn.umap" %in% names(reducedDims(cds)) ||
+                "wnn_umap" %in% names(reducedDims(cds))
+
+has_adt_umap <- "ADT_UMAP" %in% names(reducedDims(cds)) ||
+                "adt.umap" %in% names(reducedDims(cds)) ||
+                "adt_umap" %in% names(reducedDims(cds))
+
+has_rna_umap <- "UMAP" %in% names(reducedDims(cds)) ||
+                "umap" %in% names(reducedDims(cds))
+
+# 保留所有 UMAP 的备份（使用标准化名称）
+if (has_rna_umap && !("RNA_UMAP" %in% names(reducedDims(cds)))) {
+  original_rna <- if ("UMAP" %in% names(reducedDims(cds))) "UMAP" else "umap"
+  if (!("RNA_UMAP" %in% names(reducedDims(cds)))) {
+    reducedDims(cds)[["RNA_UMAP"]] <- reducedDims(cds)[[original_rna]]
+  }
+}
+
+if (has_adt_umap && !("ADT_UMAP" %in% names(reducedDims(cds)))) {
+  original_adt <- if ("adt.umap" %in% names(reducedDims(cds))) "adt.umap" else "adt_umap"
+  reducedDims(cds)[["ADT_UMAP"]] <- reducedDims(cds)[[original_adt]]
+}
+
+if (has_wnn_umap && !("WNN_UMAP" %in% names(reducedDims(cds)))) {
+  original_wnn <- if ("wnn.umap" %in% names(reducedDims(cds))) "wnn.umap" else "wnn_umap"
+  reducedDims(cds)[["WNN_UMAP"]] <- reducedDims(cds)[[original_wnn]]
+}
+
+# 关键步骤：将选择的 UMAP 复制为标准 "UMAP" 名称
+# Monocle3 函数（cluster_cells, plot_cells）只接受 "UMAP" 作为 reduction_method
+selected_umap_source <- umap_mapping[[selected_umap_monocle3]]
+
+# 如果选择的不是标准 "UMAP"，则复制一份
+if (selected_umap_source %in% names(reducedDims(cds))) {
+  if (selected_umap_source != "UMAP") {
+    reducedDims(cds)[["UMAP"]] <- reducedDims(cds)[[selected_umap_source]]
+    cat("  → 已将", selected_umap_source, "复制为标准 'UMAP' 名称\n")
+  }
+} else {
+  # 处理 SeuratWrappers 的命名（如 "wnn.umap"）
+  alt_names <- list(
+    WNN_UMAP = c("wnn.umap", "wnn_umap"),
+    ADT_UMAP = c("adt.umap", "adt_umap"),
+    RNA_UMAP = c("umap", "UMAP")
+  )
+
+  found_source <- NULL
+  for (alt in alt_names[[selected_umap_source]]) {
+    if (alt %in% names(reducedDims(cds))) {
+      found_source <- alt
+      break
+    }
+  }
+
+  if (!is.null(found_source)) {
+    reducedDims(cds)[["UMAP"]] <- reducedDims(cds)[[found_source]]
+    cat("  → 已将", found_source, "复制为标准 'UMAP' 名称\n")
+  }
+}
+
+cat("\n可用的降维空间:", paste(names(reducedDims(cds)), collapse = ", "), "\n")
+cat("用于 Monocle3 轨迹分析: UMAP (来自", selected_umap_monocle3, ")\n\n")
 ```
 
 ## 1.3 聚类和学习轨迹
 
 ```{r monocle3_trajectory}
 cat("【Monocle3】聚类细胞\n\n")
+cat(sprintf("聚类细胞（基于选择的 UMAP空间： %s）\n", selected_umap_monocle3))
 
-# 聚类
+# 聚类 - 使用标准 "UMAP" 名称 ⭐
 cds <- cluster_cells(
   cds,
-  reduction_method = selected_umap_name_monocle3,
+  reduction_method = "UMAP",  # 固定使用标准名称，已从选择的 UMAP 复制
   k = monocle3_params$cluster_k,
   cluster_method = "louvain",
   random_seed = 42
@@ -594,61 +809,34 @@ plot_monocle3_trajectory <- function(cds, reduction_name, color_by = "pseudotime
   return(p)
 }
 
-# RNA UMAP
+# 主要轨迹可视化（基于选择的 UMAP）⭐
+# 使用标准 "UMAP" 名称，已从用户选择的 UMAP 空间复制
 if ("UMAP" %in% names(reducedDims(cds))) {
   p1 <- plot_monocle3_trajectory(cds, "UMAP", "pseudotime") +
-    ggtitle("Monocle3: RNA UMAP - Pseudotime") +
+    ggtitle(sprintf("Monocle3: %s UMAP - Pseudotime", toupper(selected_umap_monocle3))) +
     scale_color_viridis(option = "viridis")
 
   p2 <- plot_monocle3_trajectory(cds, "UMAP", "cell_type") +
-    ggtitle("Monocle3: RNA UMAP - Cell Type")
+    ggtitle(sprintf("Monocle3: %s UMAP - Cell Type", toupper(selected_umap_monocle3)))
 
   combined <- p1 + p2
   print(combined)
 
+  filename <- sprintf("trajectory_%s_umap.png", tolower(selected_umap_monocle3))
   ggsave(
-    file.path(output_dir, "Plots", "Monocle3", "trajectory_rna_umap.png"),
+    file.path(output_dir, "Plots", "Monocle3", filename),
     combined, width = 14, height = 6, dpi = 300
   )
+
+  cat(sprintf("✓ Monocle3 轨迹图已保存 (%s UMAP)\n\n", toupper(selected_umap_monocle3)))
 }
 
-# ADT UMAP
-if ("ADT_UMAP" %in% names(reducedDims(cds))) {
-  p1 <- plot_monocle3_trajectory(cds, "ADT_UMAP", "pseudotime") +
-    ggtitle("Monocle3: ADT UMAP - Pseudotime") +
-    scale_color_viridis(option = "magma")
-
-  p2 <- plot_monocle3_trajectory(cds, "ADT_UMAP", "cell_type") +
-    ggtitle("Monocle3: ADT UMAP - Cell Type")
-
-  combined <- p1 + p2
-  print(combined)
-
-  ggsave(
-    file.path(output_dir, "Plots", "Monocle3", "trajectory_adt_umap.png"),
-    combined, width = 14, height = 6, dpi = 300
-  )
-}
-
-# WNN UMAP
-if ("WNN_UMAP" %in% names(reducedDims(cds))) {
-  p1 <- plot_monocle3_trajectory(cds, "WNN_UMAP", "pseudotime") +
-    ggtitle("Monocle3: WNN UMAP - Pseudotime") +
-    scale_color_viridis(option = "plasma")
-
-  p2 <- plot_monocle3_trajectory(cds, "WNN_UMAP", "cell_type") +
-    ggtitle("Monocle3: WNN UMAP - Cell Type")
-
-  combined <- p1 + p2
-  print(combined)
-
-  ggsave(
-    file.path(output_dir, "Plots", "Monocle3", "trajectory_wnn_umap.png"),
-    combined, width = 14, height = 6, dpi = 300
-  )
-}
-
-cat("✓ Monocle3 轨迹图已保存\n\n")
+<!--
+注意：原先的 ADT UMAP 和 WNN UMAP 单独可视化部分已被移除（方案A：简化）
+原因：Monocle3 的 plot_cells() 函数只接受标准的 reduction_method 名称
+无法直接使用自定义名称如 "WNN_UMAP", "ADT_UMAP"
+当前实现：只显示基于用户选择的 UMAP 空间的轨迹图
+-->
 ```
 
 ## 1.6 Monocle3差异基因
@@ -702,36 +890,52 @@ cat(strrep("=", 80), "\n\n")
 
 # 选择UMAP空间（与Monocle3相同）
 selected_umap_slingshot <- selected_umap_monocle3
-selected_umap_name_slingshot <- selected_umap_name_monocle3
 
-cat("使用UMAP空间:", selected_umap_slingshot, "(", selected_umap_name_slingshot, ")\n")
+cat("使用UMAP空间:", selected_umap_slingshot, "\n")
 
-# 获取UMAP坐标
-if (selected_umap_slingshot == "wnn") {
-  slingshot_umap <- data_obj$wnn_umap
-} else if (selected_umap_slingshot == "adt") {
-  slingshot_umap <- data_obj$adt_umap
-} else {
-  slingshot_umap <- data_obj$umap
+# 获取UMAP坐标（从CDS对象，统一来源）
+# 使用标准 "UMAP" 名称，已从用户选择的 UMAP 复制
+slingshot_umap <- reducedDims(cds)[["UMAP"]]
+
+if (is.null(slingshot_umap)) {
+  stop("未找到 UMAP 坐标！请检查 CDS 对象。")
 }
 
 # 获取聚类信息（使用Monocle3的聚类）
 slingshot_clusters <- as.character(clusters(cds))
 
+# 准备表达矩阵和元数据
+if (exists("seurat_obj")) {
+  # 新方案：从 Seurat 对象提取
+  cat("从 Seurat 对象提取数据...\n")
+
+  counts_matrix <- GetAssayData(seurat_obj, slot = "counts", assay = "RNA")
+  normalized_matrix <- GetAssayData(seurat_obj, slot = "data", assay = "RNA")
+  cell_metadata <- seurat_obj@meta.data
+
+} else if (exists("data_obj")) {
+  # 旧方案：从 data_for_monocle3 提取
+  cat("从 data_for_monocle3 对象提取数据...\n")
+
+  counts_matrix <- data_obj$counts
+  normalized_matrix <- data_obj$normalized
+  cell_metadata <- data_obj$metadata
+}
+
 # 构建SingleCellExperiment对象（Slingshot需要）
 sce <- SingleCellExperiment(
-  assays = list(counts = data_obj$counts,
-                logcounts = data_obj$normalized),
-  colData = data_obj$metadata
+  assays = list(counts = counts_matrix,
+                logcounts = normalized_matrix),
+  colData = cell_metadata
 )
 
-# 添加细胞类型
-sce$cell_type <- data_obj$cell_type
+# 添加细胞类型（从CDS对象元数据，保证一致性）
+sce$cell_type <- colData(cds)$cell_type
 
 # 添加聚类信息
 sce$monocle3_cluster <- slingshot_clusters
 
-# 添加UMAP降维
+# 添加UMAP降维（使用标准名称 "UMAP"）
 reducedDims(sce)[["UMAP"]] <- slingshot_umap
 
 cat("\n✓ SingleCellExperiment对象创建完成\n")
@@ -869,76 +1073,39 @@ plot_slingshot_trajectory <- function(sds, umap_coords, color_by = "pseudotime",
   return(p)
 }
 
-# RNA UMAP轨迹
-if ("umap" %in% names(data_obj)) {
+# 主要轨迹可视化（基于选择的 UMAP）⭐
+# 使用与 Monocle3 相同的 UMAP 空间
+umap_key <- if (selected_umap_slingshot == "wnn") "wnn_umap" else if (selected_umap_slingshot == "adt") "adt_umap" else "umap"
+
+if (umap_key %in% names(data_obj)) {
   p1 <- plot_slingshot_trajectory(
-    sds, data_obj$umap,
+    sds, data_obj[[umap_key]],
     color_by = "pseudotime",
     pseudotime_vec = slingshot_pseudotime_vec
-  ) + ggtitle("Slingshot: RNA UMAP - Pseudotime")
+  ) + ggtitle(sprintf("Slingshot: %s UMAP - Pseudotime", toupper(selected_umap_slingshot)))
 
   p2 <- plot_slingshot_trajectory(
-    sds, data_obj$umap,
+    sds, data_obj[[umap_key]],
     color_by = "cell_type",
     cell_type = data_obj$cell_type
-  ) + ggtitle("Slingshot: RNA UMAP - Cell Type")
+  ) + ggtitle(sprintf("Slingshot: %s UMAP - Cell Type", toupper(selected_umap_slingshot)))
 
   combined <- p1 + p2
   print(combined)
 
+  filename <- sprintf("trajectory_%s_umap.png", tolower(selected_umap_slingshot))
   ggsave(
-    file.path(output_dir, "Plots", "Slingshot", "trajectory_rna_umap.png"),
+    file.path(output_dir, "Plots", "Slingshot", filename),
     combined, width = 14, height = 6, dpi = 300
   )
+
+  cat(sprintf("✓ Slingshot 轨迹图已保存 (%s UMAP)\n\n", toupper(selected_umap_slingshot)))
 }
 
-# ADT UMAP轨迹
-if ("adt_umap" %in% names(data_obj)) {
-  p1 <- plot_slingshot_trajectory(
-    sds, data_obj$adt_umap,
-    color_by = "pseudotime",
-    pseudotime_vec = slingshot_pseudotime_vec
-  ) + ggtitle("Slingshot: ADT UMAP - Pseudotime")
-
-  p2 <- plot_slingshot_trajectory(
-    sds, data_obj$adt_umap,
-    color_by = "cell_type",
-    cell_type = data_obj$cell_type
-  ) + ggtitle("Slingshot: ADT UMAP - Cell Type")
-
-  combined <- p1 + p2
-  print(combined)
-
-  ggsave(
-    file.path(output_dir, "Plots", "Slingshot", "trajectory_adt_umap.png"),
-    combined, width = 14, height = 6, dpi = 300
-  )
-}
-
-# WNN UMAP轨迹
-if ("wnn_umap" %in% names(data_obj)) {
-  p1 <- plot_slingshot_trajectory(
-    sds, data_obj$wnn_umap,
-    color_by = "pseudotime",
-    pseudotime_vec = slingshot_pseudotime_vec
-  ) + ggtitle("Slingshot: WNN UMAP - Pseudotime")
-
-  p2 <- plot_slingshot_trajectory(
-    sds, data_obj$wnn_umap,
-    color_by = "cell_type",
-    cell_type = data_obj$cell_type
-  ) + ggtitle("Slingshot: WNN UMAP - Cell Type")
-
-  combined <- p1 + p2
-  print(combined)
-
-  ggsave(
-    file.path(output_dir, "Plots", "Slingshot", "trajectory_wnn_umap.png"),
-    combined, width = 14, height = 6, dpi = 300
-  )
-}
-
-cat("✓ Slingshot 轨迹图已保存\n\n")
+<!--
+注意：原先的 RNA/ADT/WNN UMAP 单独可视化部分已被移除（方案A：简化）
+当前实现：只显示基于用户选择的 UMAP 空间的轨迹图，与 Monocle3 保持一致
+-->
 ```
 
 ## 2.4 Slingshot差异基因
@@ -1090,22 +1257,21 @@ cat(strrep("=", 80), "\n\n")
 ```{r comparison_overlay, fig.width=16, fig.height=6}
 cat("【交叉验证】轨迹叠加对比\n\n")
 
-# 选择WNN UMAP（如果可用）进行对比
-if ("wnn_umap" %in% names(data_obj)) {
-  umap_for_comparison <- data_obj$wnn_umap
-  umap_name <- "WNN UMAP"
-} else if ("adt_umap" %in% names(data_obj)) {
-  umap_for_comparison <- data_obj$adt_umap
-  umap_name <- "ADT UMAP"
+# 使用已选择的 UMAP 空间进行对比（与 Monocle3 和 Slingshot 一致）
+umap_key <- if (selected_umap_monocle3 == "wnn") "wnn_umap" else if (selected_umap_monocle3 == "adt") "adt_umap" else "umap"
+umap_name <- toupper(selected_umap_monocle3)
+
+if (umap_key %in% names(data_obj)) {
+  umap_for_comparison <- data_obj[[umap_key]]
 } else {
-  umap_for_comparison <- data_obj$umap
-  umap_name <- "RNA UMAP"
+  # 备用：使用标准 UMAP 从 CDS
+  umap_for_comparison <- reducedDims(cds)[["UMAP"]]
 }
 
-cat("使用", umap_name, "进行对比\n")
+cat("使用", umap_name, "UMAP 进行对比\n")
 
-# Monocle3轨迹
-p_mono <- plot_monocle3_trajectory(cds, selected_umap_name_monocle3, "pseudotime") +
+# Monocle3轨迹 - 使用标准 "UMAP" 名称 ⭐
+p_mono <- plot_monocle3_trajectory(cds, "UMAP", "pseudotime") +
   ggtitle("Monocle3 Trajectory") +
   scale_color_viridis(option = "viridis")
 
@@ -1121,7 +1287,7 @@ p_sling <- plot_slingshot_trajectory(
 # 组合图
 combined_overlay <- p_mono + p_sling +
   plot_annotation(
-    title = paste("Trajectory Comparison on", umap_name),
+    title = paste("Trajectory Comparison on", umap_name, "UMAP"),
     theme = theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
   )
 
