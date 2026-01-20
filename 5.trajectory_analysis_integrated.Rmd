@@ -741,12 +741,11 @@ cat("✓ 轨迹图学习完成\n\n")
 ```{r monocle3_pseudotime}
 cat("【Monocle3】计算伪时间\n\n")
 
-# 定义早期细胞类型（与实际注释名称匹配）
+# 定义早期细胞类型（生物学起点：只有pre-cDC）
 early_markers <- list(
-  cDC1 = c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s"),
-  cDC2 = c("pre-cDC2s", "Proliferating cDC2s", "Early immature cDC2s"),
-  integrated = c("pre-cDC1s", "pre-cDC2s", "Proliferating cDC1s", "Proliferating cDC2s",
-                 "Early immature cDC1s", "Early immature cDC2s")
+  cDC1 = c("pre-cDC1s"),
+  cDC2 = c("pre-cDC2s"),
+  integrated = c("pre-cDC1s", "pre-cDC2s")
 )
 
 # 获取早期标记

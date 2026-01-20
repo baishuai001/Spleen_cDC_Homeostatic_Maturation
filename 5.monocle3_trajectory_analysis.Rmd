@@ -736,12 +736,11 @@ cat(strrep("=", 80), "\n\n")
 # ==================== 方法1: 自动选择根节点 ====================
 # 根据细胞类型推断发育起点
 
-# 定义不同模式的早期细胞类型（与实际注释名称匹配）
+# 定义不同模式的早期细胞类型（生物学起点：只有pre-cDC）
 early_celltype_markers <- list(
-  cDC1 = c("pre-cDC1s", "Proliferating cDC1s", "Early immature cDC1s"),
-  cDC2 = c("pre-cDC2s", "Proliferating cDC2s", "Early immature cDC2s"),
-  integrated = c("pre-cDC1s", "pre-cDC2s", "Proliferating cDC1s", "Proliferating cDC2s",
-                 "Early immature cDC1s", "Early immature cDC2s")
+  cDC1 = c("pre-cDC1s"),
+  cDC2 = c("pre-cDC2s"),
+  integrated = c("pre-cDC1s", "pre-cDC2s")
 )
 
 # 获取当前模式的早期标记
