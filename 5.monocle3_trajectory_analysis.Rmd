@@ -754,6 +754,15 @@ cat("寻找早期细胞（根节点）...\n")
 cat("  模式:", analysis_mode, "\n")
 cat("  早期标记:", paste(early_markers, collapse = ", "), "\n")
 
+# 显示实际存在的细胞类型（用于调试）
+actual_celltypes <- unique(as.character(colData(cds)$cell_type))
+cat("\n  数据中的细胞类型:\n")
+for (ct in sort(actual_celltypes)) {
+  n_cells <- sum(colData(cds)$cell_type == ct, na.rm = TRUE)
+  cat(sprintf("    - %s (%d cells)\n", ct, n_cells))
+}
+cat("\n")
+
 # 找到早期细胞
 early_cells <- which(colData(cds)$cell_type %in% early_markers)
 
