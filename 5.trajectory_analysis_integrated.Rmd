@@ -233,41 +233,105 @@ cat(strrep("=", 80), "\n")
 cat("加载轨迹分析输入数据\n")
 cat(strrep("=", 80), "\n\n")
 
-# 搜索输入文件
-input_paths <- c(
-  file.path(base_dir, paste0("trajectory_analysis_", default_analysis_mode),
-            "data", "data_for_monocle3.rds"),
-  file.path(base_dir, "trajectory_analysis", "data", "data_for_monocle3.rds"),
-  file.path(base_dir, "data", "data_for_monocle3.rds")
-)
+# ==================== 第一步：确定分析模式和查找输入文件 ====================
+# 正确的路径结构：data/{mode}/Robjects/data_for_monocle3.rds
+
+# 构建可能的输入路径（按优先级）
+possible_modes <- c(default_analysis_mode, "cDC1", "cDC2", "integrated")
+possible_modes <- unique(possible_modes)  # 去重
 
 input_file <- NULL
-for (path in input_paths) {
+detected_mode <- NULL
+
+cat("搜索输入文件...\n")
+
+# 优先搜索：data/{mode}/Robjects/data_for_monocle3.rds（正确的上游输出位置）
+for (mode in possible_modes) {
+  path <- file.path(base_dir, "data", mode, "Robjects", "data_for_monocle3.rds")
+  cat(sprintf("  检查: data/%s/Robjects/data_for_monocle3.rds ... ", mode))
+
   if (file.exists(path)) {
     input_file <- path
+    detected_mode <- mode
+    cat("✓ 找到\n")
     break
+  } else {
+    cat("✗\n")
   }
 }
 
+# 备用搜索：其他可能的位置（向后兼容）
 if (is.null(input_file)) {
-  stop("❌ 未找到 data_for_monocle3.rds！")
+  cat("\n尝试备用位置...\n")
+
+  backup_paths <- c(
+    file.path(base_dir, paste0("trajectory_analysis_", default_analysis_mode),
+              "data", "data_for_monocle3.rds"),
+    file.path(base_dir, "trajectory_analysis", "data", "data_for_monocle3.rds"),
+    file.path(base_dir, "data", "data_for_monocle3.rds")
+  )
+
+  for (path in backup_paths) {
+    if (file.exists(path)) {
+      input_file <- path
+      detected_mode <- default_analysis_mode
+      cat("  ✓ 找到:", path, "\n")
+      break
+    }
+  }
 }
 
-cat("输入文件:", input_file, "\n")
+# 如果仍未找到，报错并提示正确路径
+if (is.null(input_file)) {
+  stop("\n❌ 未找到 data_for_monocle3.rds！\n\n",
+       "请确保文件位于以下位置之一：\n",
+       "  推荐位置（来自4.downstream_analysis.Rmd输出）：\n",
+       sprintf("    - data/cDC1/Robjects/data_for_monocle3.rds\n"),
+       sprintf("    - data/cDC2/Robjects/data_for_monocle3.rds\n"),
+       sprintf("    - data/integrated/Robjects/data_for_monocle3.rds\n"),
+       "\n  或备用位置：\n",
+       sprintf("    - trajectory_analysis_%s/data/data_for_monocle3.rds\n", default_analysis_mode))
+}
 
-# 加载数据
+cat("\n✓ 输入文件:", input_file, "\n")
+cat("  检测到的模式:", detected_mode, "\n")
+
+# ==================== 第二步：加载数据并验证模式 ====================
 data_obj <- readRDS(input_file)
 
-# 获取分析模式
+# 获取数据中的分析模式
 if (!is.null(data_obj$analysis_mode)) {
-  analysis_mode <- data_obj$analysis_mode
+  data_mode <- data_obj$analysis_mode
+  cat("  数据中的模式:", data_mode, "\n")
 } else {
-  analysis_mode <- default_analysis_mode
+  data_mode <- NULL
+  cat("  ⚠ 数据中未指定模式\n")
 }
 
-cat("✓ 分析模式:", analysis_mode, "\n")
+# 确定最终使用的分析模式
+if (!is.null(data_mode)) {
+  # 优先使用数据中的模式
+  analysis_mode <- data_mode
 
-# 设置输出目录
+  # 验证与检测到的路径模式是否一致
+  if (!is.null(detected_mode) && detected_mode != data_mode) {
+    cat(sprintf("\n  ⚠ 警告：路径模式(%s) 与数据模式(%s) 不一致\n", detected_mode, data_mode))
+    cat("  → 使用数据中的模式:", data_mode, "\n")
+  } else {
+    cat("  ✓ 模式验证通过:", analysis_mode, "\n")
+  }
+} else {
+  # 数据中没有模式信息，使用检测到的或默认的
+  if (!is.null(detected_mode)) {
+    analysis_mode <- detected_mode
+    cat("  → 使用检测到的模式:", analysis_mode, "\n")
+  } else {
+    analysis_mode <- default_analysis_mode
+    cat("  → 使用默认模式:", analysis_mode, "\n")
+  }
+}
+
+# ==================== 第三步：根据最终模式设置输出目录 ====================
 output_dir <- file.path(base_dir, paste0("trajectory_analysis_", analysis_mode))
 
 # 创建输出目录
