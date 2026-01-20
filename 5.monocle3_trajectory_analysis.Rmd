@@ -787,6 +787,16 @@ if (length(early_cells) > 0) {
 
 # 查看伪时间分布
 pseudotime_vals <- pseudotime(cds)
+
+# 检查伪时间是否成功计算
+if (is.null(pseudotime_vals) || length(pseudotime_vals) == 0) {
+  stop("❌ 错误：伪时间计算失败！pseudotime 向量为空。\n",
+       "可能原因：\n",
+       "  1. order_cells() 未正确执行\n",
+       "  2. 轨迹学习失败\n",
+       "  3. 数据格式问题")
+}
+
 cat("\n伪时间统计:\n")
 cat("  范围:", round(min(pseudotime_vals, na.rm = TRUE), 2), "-",
     round(max(pseudotime_vals, na.rm = TRUE), 2), "\n")
