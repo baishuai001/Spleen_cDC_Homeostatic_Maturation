@@ -471,6 +471,44 @@ if (exists("seurat_obj")) {
   cat("  Cells:", ncol(cds), "\n")
   cat("  Genes:", nrow(cds), "\n\n")
 
+  # ⭐ 关键：确保 cell_type 信息被添加到 CDS
+  # SeuratWrappers 可能不会自动转移所有 metadata 列
+  if (!"cell_type" %in% colnames(colData(cds))) {
+    if ("cell_type" %in% colnames(seurat_obj@meta.data)) {
+      cat("添加 cell_type 信息到 CDS...\n")
+      colData(cds)$cell_type <- seurat_obj@meta.data$cell_type
+    } else {
+      warning("⚠ Seurat 对象中未找到 cell_type 列！尝试查找替代列...\n")
+
+      # 尝试常见的细胞类型列名
+      possible_names <- c("author_annotation", "celltype", "cluster", "seurat_clusters")
+      found <- FALSE
+
+      for (col_name in possible_names) {
+        if (col_name %in% colnames(seurat_obj@meta.data)) {
+          cat(sprintf("  使用 '%s' 作为 cell_type\n", col_name))
+          colData(cds)$cell_type <- seurat_obj@meta.data[[col_name]]
+          found <- TRUE
+          break
+        }
+      }
+
+      if (!found) {
+        stop("❌ 错误：无法在 Seurat 对象中找到细胞类型信息！\n",
+             "可用的列：", paste(colnames(seurat_obj@meta.data), collapse = ", "))
+      }
+    }
+  }
+
+  # 验证 cell_type 已正确添加
+  cat("\n验证 cell_type 信息:\n")
+  cat("  cell_type 列存在:", "cell_type" %in% colnames(colData(cds)), "\n")
+  if ("cell_type" %in% colnames(colData(cds))) {
+    cat("  细胞类型数:", length(unique(colData(cds)$cell_type)), "\n")
+    cat("  前5种类型:", paste(head(unique(colData(cds)$cell_type), 5), collapse = ", "), "\n")
+  }
+  cat("\n")
+
   # 检查可用的降维空间
   cat("Seurat对象中可用的降维:\n")
   available_reductions <- names(seurat_obj@reductions)
@@ -839,35 +877,56 @@ cat("  NA值数量:", sum(is.na(pseudotime_vals)), "\n")
 
 # 保存伪时间结果
 # 安全地提取聚类和分区信息（兼容不同的 CDS 对象结构）
-cluster_info <- tryCatch(
-  as.character(clusters(cds)),
-  error = function(e) {
-    if ("clusters" %in% colnames(colData(cds))) {
-      return(colData(cds)$clusters)
-    } else {
-      return(rep(NA, ncol(cds)))
-    }
-  }
-)
+cat("\n提取聚类和分区信息...\n")
 
-partition_info <- tryCatch(
-  as.character(partitions(cds)),
-  error = function(e) {
-    if ("partitions" %in% colnames(colData(cds))) {
-      return(colData(cds)$partitions)
-    } else {
-      return(rep(NA, ncol(cds)))
-    }
+cluster_info <- tryCatch({
+  result <- clusters(cds)
+  if (is.null(result) || length(result) == 0) {
+    cat("  ⚠ clusters() 返回空值\n")
+    return(rep(NA_character_, ncol(cds)))
   }
-)
+  return(as.character(result))
+}, error = function(e) {
+  cat("  ⚠ clusters() 调用失败:", conditionMessage(e), "\n")
+  if ("clusters" %in% colnames(colData(cds))) {
+    cat("  → 从 colData 获取\n")
+    return(as.character(colData(cds)$clusters))
+  } else {
+    cat("  → 使用 NA 填充\n")
+    return(rep(NA_character_, ncol(cds)))
+  }
+})
 
-# 确保向量长度一致
-if (length(cluster_info) == 0) {
-  cluster_info <- rep(NA, ncol(cds))
+partition_info <- tryCatch({
+  result <- partitions(cds)
+  if (is.null(result) || length(result) == 0) {
+    cat("  ⚠ partitions() 返回空值\n")
+    return(rep(NA_character_, ncol(cds)))
+  }
+  return(as.character(result))
+}, error = function(e) {
+  cat("  ⚠ partitions() 调用失败:", conditionMessage(e), "\n")
+  if ("partitions" %in% colnames(colData(cds))) {
+    cat("  → 从 colData 获取\n")
+    return(as.character(colData(cds)$partitions))
+  } else {
+    cat("  → 使用 NA 填充\n")
+    return(rep(NA_character_, ncol(cds)))
+  }
+})
+
+# 再次确保向量长度与细胞数一致
+if (length(cluster_info) != ncol(cds)) {
+  cat("  ⚠ cluster_info 长度不匹配 (", length(cluster_info), " vs ", ncol(cds), "), 使用 NA\n", sep = "")
+  cluster_info <- rep(NA_character_, ncol(cds))
 }
-if (length(partition_info) == 0) {
-  partition_info <- rep(NA, ncol(cds))
+if (length(partition_info) != ncol(cds)) {
+  cat("  ⚠ partition_info 长度不匹配 (", length(partition_info), " vs ", ncol(cds), "), 使用 NA\n", sep = "")
+  partition_info <- rep(NA_character_, ncol(cds))
 }
+
+cat("  ✓ 聚类信息长度:", length(cluster_info), "\n")
+cat("  ✓ 分区信息长度:", length(partition_info), "\n")
 
 pseudotime_df <- data.frame(
   cell_id = colnames(cds),
