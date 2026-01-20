@@ -351,37 +351,89 @@ dir.create(file.path(output_dir, "Tables"), showWarnings = FALSE, recursive = TR
 cat("\n输出目录:", output_dir, "\n")
 
 # ==================== 第三步：检查数据完整性 ====================
-cat("\n数据组件检查:\n")
+cat("\n数据完整性检查:\n")
 
-required_components <- c("counts", "normalized", "metadata", "umap", "cell_type")
-for (comp in required_components) {
-  if (comp %in% names(monocle3_data)) {
-    cat(sprintf("  ✓ %s\n", comp))
+if (exists("seurat_obj")) {
+  # ⭐ 新方案：检查 Seurat 对象
+  cat("  数据格式: Seurat 对象\n\n")
+
+  # 检查必需组件
+  cat("必需组件:\n")
+  cat("  ✓ Expression matrix (RNA assay)\n")
+  cat("  ✓ Metadata\n")
+  cat("  ✓ Cell type annotation\n")
+
+  # 检查 UMAP 空间
+  cat("\nUMAP 降维空间:\n")
+  available_reductions <- names(seurat_obj@reductions)
+
+  has_rna_umap <- "umap" %in% available_reductions
+  has_adt_umap <- any(c("adt_umap", "adt.umap") %in% available_reductions)
+  has_wnn_umap <- any(c("wnn_umap", "wnn.umap") %in% available_reductions)
+
+  if (has_rna_umap) cat("  ✓ RNA UMAP (umap)\n")
+  if (has_adt_umap) {
+    adt_name <- if ("adt_umap" %in% available_reductions) "adt_umap" else "adt.umap"
+    cat(sprintf("  ✓ ADT UMAP (%s)\n", adt_name))
   } else {
-    stop(sprintf("❌ 缺少必需组件: %s", comp))
+    cat("  ○ ADT UMAP (不可用)\n")
   }
-}
-
-# 检查可选的UMAP空间
-optional_umaps <- c("adt_umap", "wnn_umap", "pca")
-cat("\n可选组件:\n")
-for (comp in optional_umaps) {
-  if (comp %in% names(monocle3_data)) {
-    cat(sprintf("  ✓ %s (可用)\n", comp))
+  if (has_wnn_umap) {
+    wnn_name <- if ("wnn_umap" %in% available_reductions) "wnn_umap" else "wnn.umap"
+    cat(sprintf("  ✓ WNN UMAP (%s)\n", wnn_name))
   } else {
-    cat(sprintf("  ○ %s (不可用)\n", comp))
+    cat("  ○ WNN UMAP (不可用)\n")
   }
+
+  # 数据概览
+  cat("\n数据概览:\n")
+  cat("  细胞数:", ncol(seurat_obj), "\n")
+  cat("  基因数:", nrow(seurat_obj), "\n")
+  cat("  细胞类型数:", length(unique(seurat_obj@meta.data$cell_type)), "\n")
+
+  # 显示细胞类型分布
+  cat("\n细胞类型分布:\n")
+  print(table(seurat_obj@meta.data$cell_type))
+
+} else if (exists("monocle3_data")) {
+  # 🔄 旧方案：检查 data_for_monocle3 格式
+  cat("  数据格式: data_for_monocle3\n\n")
+
+  # 检查必需组件
+  cat("必需组件:\n")
+  required_components <- c("counts", "normalized", "metadata", "umap", "cell_type")
+  for (comp in required_components) {
+    if (comp %in% names(monocle3_data)) {
+      cat(sprintf("  ✓ %s\n", comp))
+    } else {
+      stop(sprintf("❌ 缺少必需组件: %s", comp))
+    }
+  }
+
+  # 检查可选的UMAP空间
+  optional_umaps <- c("adt_umap", "wnn_umap", "pca")
+  cat("\n可选组件:\n")
+  for (comp in optional_umaps) {
+    if (comp %in% names(monocle3_data)) {
+      cat(sprintf("  ✓ %s (可用)\n", comp))
+    } else {
+      cat(sprintf("  ○ %s (不可用)\n", comp))
+    }
+  }
+
+  # 数据概览
+  cat("\n数据概览:\n")
+  cat("  细胞数:", ncol(monocle3_data$counts), "\n")
+  cat("  基因数:", nrow(monocle3_data$counts), "\n")
+  cat("  细胞类型数:", length(unique(monocle3_data$cell_type)), "\n")
+
+  # 显示细胞类型分布
+  cat("\n细胞类型分布:\n")
+  print(table(monocle3_data$cell_type))
+
+} else {
+  stop("❌ 错误：未找到有效的数据对象 (seurat_obj 或 monocle3_data)")
 }
-
-# 数据概览
-cat("\n数据概览:\n")
-cat("  细胞数:", ncol(monocle3_data$counts), "\n")
-cat("  基因数:", nrow(monocle3_data$counts), "\n")
-cat("  细胞类型数:", length(unique(monocle3_data$cell_type)), "\n")
-
-# 显示细胞类型分布
-cat("\n细胞类型分布:\n")
-print(table(monocle3_data$cell_type))
 
 cat("\n", strrep("=", 80), "\n")
 cat("✓ 数据加载完成\n")
