@@ -217,6 +217,9 @@ CELL_TYPE_COL <- "author_annotation"  # 或 "Annotation_detailed"
 # 轨迹起点（留空则手动选择）
 START_CELL_TYPE <- NULL  # 或指定: "Pre-cDC1s"
 
+# 排除的细胞类型（避免分支干扰主干轨迹）
+EXCLUDE_CELL_TYPES <- c("Proliferating cDC1s", "proliferating")  # 可根据数据调整
+
 # 输出目录
 OUTPUT_DIR <- paste0("monocle3_analysis_", MODE)
 
@@ -283,6 +286,9 @@ CELL_TYPE_COL <- "author_annotation"
 
 # 轨迹起点（NULL = 交互式选择）
 START_CELL_TYPE <- NULL  # 或 "Pre-cDC1s"
+
+# 排除的细胞类型（避免分支干扰主干轨迹）
+EXCLUDE_CELL_TYPES <- c("Proliferating cDC1s", "proliferating")  # 可根据数据调整
 
 # 输出目录
 OUTPUT_DIR <- paste0("monocle3_analysis_", MODE)
@@ -402,11 +408,35 @@ cat("  移除:", n_removed, "细胞 (",
 
 # 检查细胞类型分布
 if (CELL_TYPE_COL %in% colnames(seurat_obj@meta.data)) {
-  cat("\n细胞类型分布:\n")
+  cat("\n过滤前细胞类型分布:\n")
   cell_counts <- table(seurat_obj@meta.data[[CELL_TYPE_COL]])
   print(cell_counts)
 } else {
   stop("错误：未找到细胞类型列 '", CELL_TYPE_COL, "'")
+}
+
+# 排除指定的细胞类型（避免分支干扰主干轨迹）
+if (!is.null(EXCLUDE_CELL_TYPES) && length(EXCLUDE_CELL_TYPES) > 0) {
+  cat("\n排除细胞类型:\n")
+  cat("  待排除:", paste(EXCLUDE_CELL_TYPES, collapse=", "), "\n")
+
+  n_before <- ncol(seurat_obj)
+
+  # 过滤细胞
+  keep_cells <- !seurat_obj@meta.data[[CELL_TYPE_COL]] %in% EXCLUDE_CELL_TYPES
+  seurat_obj <- seurat_obj[, keep_cells]
+
+  n_after <- ncol(seurat_obj)
+  n_excluded <- n_before - n_after
+
+  cat("  排除前:", n_before, "细胞\n")
+  cat("  排除后:", n_after, "细胞\n")
+  cat("  移除:", n_excluded, "细胞 (",
+      round(n_excluded/n_before*100, 2), "%)\n")
+
+  cat("\n过滤后细胞类型分布:\n")
+  cell_counts_after <- table(seurat_obj@meta.data[[CELL_TYPE_COL]])
+  print(cell_counts_after)
 }
 
 cat("\n✓ 数据质控完成\n")
