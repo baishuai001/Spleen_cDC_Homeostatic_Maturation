@@ -606,27 +606,36 @@ cat("✓ 轨迹图学习完成\n")
 cat("\n排序细胞并计算伪时间\n")
 cat(rep("=", 80), "\n", sep="")
 
+# 显示所有可用的细胞类型
+cat("\n可用细胞类型:\n")
+available_types <- levels(colData(cds)$cell_type)
+for (i in seq_along(available_types)) {
+  cat(sprintf("  %d. %s\n", i, available_types[i]))
+}
+
 # 确定起点细胞类型
 if (is.null(START_CELL_TYPE)) {
   # 自动检测起点
   potential_starts <- c("Pre-cDC1s", "Pre-cDC2s", "pre-cDC1", "pre-cDC2",
-                       "Progenitor", "progenitor", "Early")
+                       "pre-cDC1s", "pre-cDC2s",  # 小写变体
+                       "Progenitor", "progenitor", "Early", "early")
 
-  found_starts <- potential_starts[potential_starts %in% levels(colData(cds)$cell_type)]
+  found_starts <- potential_starts[potential_starts %in% available_types]
 
   if (length(found_starts) > 0) {
     START_CELL_TYPE <- found_starts[1]
-    cat("✓ 自动检测起点:", START_CELL_TYPE, "\n")
+    cat("\n✓ 自动检测起点:", START_CELL_TYPE, "\n")
   } else {
-    cat("⚠ 未找到典型起点细胞类型\n")
-    cat("可用细胞类型:", paste(levels(colData(cds)$cell_type), collapse=", "), "\n")
+    cat("\n⚠ 未找到典型起点细胞类型\n")
+    cat("候选起点:", paste(potential_starts, collapse=", "), "\n")
 
     # 使用第一个细胞类型
-    START_CELL_TYPE <- levels(colData(cds)$cell_type)[1]
-    cat("使用默认起点:", START_CELL_TYPE, "\n")
+    START_CELL_TYPE <- available_types[1]
+    cat("⚠ 使用默认起点:", START_CELL_TYPE, "\n")
+    cat("  警告：这可能不是生物学起点！建议手动设置 START_CELL_TYPE\n")
   }
 } else {
-  cat("✓ 使用指定起点:", START_CELL_TYPE, "\n")
+  cat("\n✓ 使用指定起点:", START_CELL_TYPE, "\n")
 }
 
 # 获取起点细胞（使用细胞名称，不是索引）
@@ -650,6 +659,23 @@ if ("pseudotime" %in% colnames(colData(cds))) {
   cat("✓ 伪时间计算完成\n")
   cat("  伪时间范围:", round(range(pseudotime(cds), na.rm=TRUE), 3), "\n")
   cat("  NA值数量:", sum(is.na(pseudotime(cds))), "\n")
+
+  # 显示各细胞类型的伪时间统计（调试用）
+  cat("\n各细胞类型的伪时间统计:\n")
+  pt_by_type <- aggregate(pseudotime(cds),
+                          by = list(cell_type = colData(cds)$cell_type),
+                          FUN = function(x) c(mean = mean(x, na.rm=TRUE),
+                                             median = median(x, na.rm=TRUE),
+                                             max = max(x, na.rm=TRUE)))
+  pt_summary <- data.frame(
+    cell_type = pt_by_type$cell_type,
+    mean_pt = round(pt_by_type$x[, "mean"], 2),
+    median_pt = round(pt_by_type$x[, "median"], 2),
+    max_pt = round(pt_by_type$x[, "max"], 2)
+  )
+  pt_summary <- pt_summary[order(pt_summary$mean_pt), ]
+  print(pt_summary)
+
 } else {
   warning("警告：伪时间未计算成功")
 }
