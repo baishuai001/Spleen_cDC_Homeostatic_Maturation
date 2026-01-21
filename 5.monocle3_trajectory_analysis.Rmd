@@ -1086,7 +1086,7 @@ plot_trajectory_with_graph <- function(cds, reduction_name, color_by = "pseudoti
     label_leaves = show_labels,
     label_branch_points = show_labels,
     label_principal_points = show_labels,
-    graph_label_size = 3,
+    graph_label_size = ifelse(show_labels, 3, 0),
     cell_size = point_size,
     alpha = point_alpha
   ) +
