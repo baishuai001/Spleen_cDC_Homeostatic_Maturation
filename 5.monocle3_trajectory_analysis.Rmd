@@ -1070,7 +1070,8 @@ plot_trajectory_on_umap <- function(cds, reduction_name, color_by = "pseudotime"
 #' @param cds Monocle3 CDS对象
 #' @param reduction_name UMAP空间名称
 #' @param color_by 颜色映射
-plot_trajectory_with_graph <- function(cds, reduction_name, color_by = "pseudotime") {
+plot_trajectory_with_graph <- function(cds, reduction_name, color_by = "pseudotime",
+                                       show_labels = TRUE) {
 
   if (!reduction_name %in% names(reducedDims(cds))) {
     return(NULL)
@@ -1082,8 +1083,9 @@ plot_trajectory_with_graph <- function(cds, reduction_name, color_by = "pseudoti
     reduction_method = reduction_name,
     color_cells_by = color_by,
     label_cell_groups = FALSE,
-    label_leaves = FALSE,
-    label_branch_points = FALSE,
+    label_leaves = !show_labels,
+    label_branch_points = !show_labels,
+    label_principal_points = show_labels,
     graph_label_size = 3,
     cell_size = point_size,
     alpha = point_alpha
@@ -1106,43 +1108,86 @@ cat("✓ 可视化函数定义完成\n")
 ```{r viz_main_trajectory, fig.width=14, fig.height=6}
 cat(sprintf("绘制 %s UMAP 轨迹图...\n", selected_umap_label))
 
-# 轨迹图（伪时间）
-p1 <- plot_trajectory_with_graph(
+# === 版本1：带标签的轨迹图 ===
+# 轨迹图（伪时间，带标签）
+p1_labeled <- plot_trajectory_with_graph(
   cds,
   reduction_name = "UMAP",  # 使用标准名称 ⭐
-  color_by = "pseudotime"
+  color_by = "pseudotime",
+  show_labels = TRUE
 ) +
   ggtitle(sprintf("%s UMAP - Pseudotime", selected_umap_label)) +
   scale_color_viridis(option = "viridis")
 
-# 细胞类型图
-p2 <- plot_trajectory_with_graph(
+# 细胞类型图（带标签）
+p2_labeled <- plot_trajectory_with_graph(
   cds,
   reduction_name = "UMAP",  # 使用标准名称 ⭐
-  color_by = "cell_type"
+  color_by = "cell_type",
+  show_labels = TRUE
 ) +
   ggtitle(sprintf("%s UMAP - Cell Type", selected_umap_label))
 
-# 组合图
-combined <- p1 + p2
-print(combined)
+# 组合图（带标签）
+combined_labeled <- p1_labeled + p2_labeled
+print(combined_labeled)
 
-# 保存（使用描述性文件名）
+# === 版本2：不带标签的轨迹图 ===
+# 轨迹图（伪时间，不带标签）
+p1_clean <- plot_trajectory_with_graph(
+  cds,
+  reduction_name = "UMAP",
+  color_by = "pseudotime",
+  show_labels = FALSE
+) +
+  ggtitle(sprintf("%s UMAP - Pseudotime (Clean)", selected_umap_label)) +
+  scale_color_viridis(option = "viridis")
+
+# 细胞类型图（不带标签）
+p2_clean <- plot_trajectory_with_graph(
+  cds,
+  reduction_name = "UMAP",
+  color_by = "cell_type",
+  show_labels = FALSE
+) +
+  ggtitle(sprintf("%s UMAP - Cell Type (Clean)", selected_umap_label))
+
+# 组合图（不带标签）
+combined_clean <- p1_clean + p2_clean
+print(combined_clean)
+
+# === 保存图片 ===
+# 保存带标签版本
 main_filename <- sprintf("trajectory_%s_umap.png", tolower(selected_umap_label))
 ggsave(
   file.path(output_dir, "Plots", "Trajectory", main_filename),
-  combined,
+  combined_labeled,
   width = 14, height = 6, dpi = 300
 )
 
 pseudotime_filename <- sprintf("pseudotime_%s_umap.png", tolower(selected_umap_label))
 ggsave(
   file.path(output_dir, "Plots", "Trajectory", pseudotime_filename),
-  p1,
+  p1_labeled,
   width = 8, height = 6, dpi = 300
 )
 
-cat(sprintf("  ✓ %s UMAP 轨迹图已保存\n", selected_umap_label))
+# 保存不带标签版本（clean）
+main_clean_filename <- sprintf("trajectory_%s_umap_clean.png", tolower(selected_umap_label))
+ggsave(
+  file.path(output_dir, "Plots", "Trajectory", main_clean_filename),
+  combined_clean,
+  width = 14, height = 6, dpi = 300
+)
+
+pseudotime_clean_filename <- sprintf("pseudotime_%s_umap_clean.png", tolower(selected_umap_label))
+ggsave(
+  file.path(output_dir, "Plots", "Trajectory", pseudotime_clean_filename),
+  p1_clean,
+  width = 8, height = 6, dpi = 300
+)
+
+cat(sprintf("  ✓ %s UMAP 轨迹图已保存（带标签和clean版本）\n", selected_umap_label))
 ```
 
 <!--
