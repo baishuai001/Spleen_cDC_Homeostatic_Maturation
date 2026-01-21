@@ -1,0 +1,1143 @@
+---
+title: "Slingshot 轨迹分析 - cDC 发育轨迹推断"
+author: "GSE228544 CITE-seq Analysis Pipeline"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cosmo
+    code_folding: show
+    df_print: paged
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 10,
+  dpi = 300
+)
+```
+
+# 脚本说明 {.tabset}
+
+## 概述
+
+本脚本使用 **Slingshot** 进行 cDC 发育轨迹分析。
+
+### Slingshot 简介
+
+**Slingshot** 是一个快速、直观的轨迹推断工具，特别适合树状分支结构的发育轨迹。
+
+#### 核心优势
+
+| 特性 | 说明 | 优势 |
+|------|------|------|
+| **速度快** | 基于主曲线算法 | 几秒到几分钟完成 ⚡ |
+| **Seurat集成** | 原生支持Seurat对象 | 无需格式转换 |
+| **直观可视化** | 清晰的轨迹曲线 | 易于理解和展示 |
+| **灵活性高** | 可手动指定起点/终点 | 适应多种场景 |
+| **稳健性好** | 对参数不敏感 | 结果稳定 |
+
+#### 与其他方法对比
+
+| 方法 | **Slingshot** | Monocle3 | PAGA |
+|------|-------------|----------|------|
+| 速度 | **非常快** ⚡ | 慢 | 快 |
+| 算法 | **主曲线 + MST** | 图学习 | 图抽象 |
+| 适用拓扑 | **树状分支** | 复杂图 | 任意拓扑 |
+| 易用性 | **最简单** ⭐ | 中等 | 中等 |
+| 可视化 | **最直观** ⭐ | 复杂 | 抽象 |
+
+### 主要功能
+
+1. **三种UMAP空间完整支持**
+   - RNA UMAP（基于基因表达）
+   - ADT UMAP（基于表面蛋白）
+   - WNN UMAP（加权整合，推荐）⭐
+
+2. **轨迹推断**
+   - 自动构建最小生成树（MST）
+   - 主曲线拟合平滑轨迹
+   - 伪时间计算
+   - 多谱系支持
+
+3. **差异分析**
+   - 轨迹相关基因识别
+   - 谱系特异基因
+   - 分支点基因
+
+4. **多模式支持**
+   - cDC1 特异分析
+   - cDC2 特异分析
+   - 整合分析
+
+### 输入数据
+
+- **来源：** `4.downstream_analysis.Rmd` 输出
+- **文件：** `results/{mode}/Robjects/seurat_obj_annotated.rds`
+- **内容：** 完整Seurat对象，包含RNA/ADT/WNN降维、细胞注释等
+
+### 输出结果
+
+```
+slingshot_analysis_{mode}/
+├── data/
+│   └── slingshot_object.rds           # Slingshot对象
+├── Robjects/
+│   ├── seurat_with_pseudotime.rds     # 添加伪时间的Seurat对象
+│   └── trajectory_genes.rds           # 轨迹相关基因
+├── Plots/
+│   ├── Trajectory/                    # 轨迹图
+│   │   ├── trajectory_rna_umap.png    # RNA UMAP轨迹
+│   │   ├── trajectory_adt_umap.png    # ADT UMAP轨迹
+│   │   ├── trajectory_wnn_umap.png    # WNN UMAP轨迹 ⭐
+│   │   └── trajectory_curves_*.png    # 轨迹曲线详图
+│   ├── Pseudotime/                    # 伪时间图
+│   │   ├── pseudotime_rna_umap.png
+│   │   ├── pseudotime_adt_umap.png
+│   │   ├── pseudotime_wnn_umap.png
+│   │   └── pseudotime_distribution.png
+│   ├── Genes/                         # 基因表达
+│   │   ├── trajectory_genes_heatmap.png
+│   │   └── markers_along_trajectory_*.png
+│   └── QC/
+│       └── slingshot_qc_metrics.png
+└── Tables/
+    ├── pseudotime_by_cell.csv         # 每个细胞的伪时间
+    ├── trajectory_genes.csv           # 轨迹相关基因
+    ├── lineage_genes_*.csv            # 谱系特异基因
+    └── cell_weights.csv               # 细胞在各谱系的权重
+```
+
+## 技术特性
+
+### Slingshot 算法原理
+
+#### 步骤1：聚类连接（Cluster-based MST）
+
+```
+Pre-cDC1s ────┐
+              ├─── Proliferating ─── Early Mature ─── Mature cDC1
+Pre-cDC2s ────┘                         │
+                                        └─── Mature cDC2
+```
+
+基于细胞类型质心构建最小生成树（MST）。
+
+#### 步骤2：主曲线拟合
+
+在每条路径上拟合平滑的主曲线，作为轨迹。
+
+```
+细胞 ●●●●●
+     ╲  ╲
+主曲线 ━━━━━━━━━━━━━━━━━━━━━━→
+```
+
+#### 步骤3：伪时间计算
+
+计算每个细胞沿曲线的弧长作为伪时间。
+
+```
+伪时间：0.0 ──→ 0.25 ──→ 0.5 ──→ 0.75 ──→ 1.0
+细胞： Pre-cDC  Prolif   Early    Late    Mature
+```
+
+### 三种UMAP空间选择
+
+| UMAP类型 | 适用场景 | 推荐度 |
+|---------|---------|-------|
+| **WNN UMAP** | 多模态整合分析 | ⭐⭐⭐ 最推荐 |
+| **RNA UMAP** | 基因表达驱动的轨迹 | ⭐⭐ 推荐 |
+| **ADT UMAP** | 蛋白标志物驱动 | ⭐ 可选 |
+
+**建议：** 优先使用 WNN UMAP，因为它整合了RNA和蛋白信息，最准确。
+
+## 使用说明
+
+### 准备工作
+
+#### 检查输入文件
+
+```{r check-input, eval=FALSE}
+# 检查Seurat对象是否存在
+mode <- "cDC1"  # 或 "cDC2", "integrated"
+input_file <- file.path("results", mode, "Robjects", "seurat_obj_annotated.rds")
+
+if (file.exists(input_file)) {
+  cat("✓ 输入文件存在:", input_file, "\n")
+} else {
+  cat("✗ 输入文件不存在，请先运行4.downstream_analysis.Rmd\n")
+}
+```
+
+### 运行分析
+
+在RStudio中：
+
+1. 打开 `6.slingshot_trajectory.Rmd`
+2. 设置下方的分析参数
+3. 点击 **Knit to HTML**
+4. 等待分析完成（约5-10分钟）
+
+### 参数设置
+
+```{r params, eval=FALSE}
+# =============================================================================
+# 用户参数设置
+# =============================================================================
+
+# 分析模式
+MODE <- "cDC1"  # 选项: "cDC1", "cDC2", "integrated"
+
+# 主要UMAP空间（用于轨迹推断）
+PRIMARY_UMAP <- "wnn"  # 选项: "rna", "adt", "wnn"
+
+# 细胞类型列
+CELL_TYPE_COL <- "author_annotation"  # 或 "Annotation_detailed"
+
+# 轨迹起点（留空自动检测）
+START_CLUSTER <- NULL  # 或指定: "Pre-cDC1s"
+
+# 轨迹终点（留空自动检测）
+END_CLUSTER <- NULL    # 或指定: c("Mature cDC1", "Mature cDC2")
+
+# 输出目录
+OUTPUT_DIR <- paste0("slingshot_analysis_", MODE)
+
+# 其他参数
+OMEGA <- TRUE          # 是否允许多谱系
+SHRINK <- 1            # 曲线收缩参数（0-1，越大越平滑）
+MIN_GENES <- 200       # 最小基因数过滤
+```
+
+---
+
+# 环境准备 {.tabset}
+
+## 加载R包
+
+```{r load-packages}
+# 核心包
+library(Seurat)
+library(slingshot)
+library(SingleCellExperiment)
+
+# 数据处理
+library(tidyverse)
+library(Matrix)
+
+# 可视化
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(viridis)
+library(pheatmap)
+
+# 其他
+library(scales)
+library(grDevices)
+
+cat("✓ 所有R包加载成功\n")
+```
+
+## 设置参数
+
+```{r set-parameters}
+# =============================================================================
+# 分析参数
+# =============================================================================
+
+# 分析模式
+MODE <- "cDC1"  # 可修改: "cDC1", "cDC2", "integrated"
+
+# 主要UMAP空间
+PRIMARY_UMAP <- "wnn"  # 可修改: "rna", "adt", "wnn"
+
+# 细胞类型列
+CELL_TYPE_COL <- "author_annotation"
+
+# 轨迹起点/终点（NULL = 自动检测）
+START_CLUSTER <- NULL
+END_CLUSTER <- NULL
+
+# 输出目录
+OUTPUT_DIR <- paste0("slingshot_analysis_", MODE)
+
+# Slingshot参数
+OMEGA <- TRUE    # 允许多谱系
+SHRINK <- 1.0    # 曲线收缩（1 = 完全收缩）
+EXTEND <- "n"    # 曲线延伸方式
+THRESH <- 0.001  # 收敛阈值
+
+# QC参数
+MIN_GENES <- 200
+MAX_GENES <- 5000
+MIN_UMI <- 500
+
+# 可视化参数
+POINT_SIZE <- 1.5
+ALPHA <- 0.8
+ARROW_SIZE <- 1.0
+
+# 差异分析参数
+N_TOP_GENES <- 50
+PVAL_THRESHOLD <- 0.05
+
+cat("✓ 参数设置完成\n")
+cat("  模式:", MODE, "\n")
+cat("  主要UMAP:", PRIMARY_UMAP, "\n")
+cat("  细胞类型列:", CELL_TYPE_COL, "\n")
+```
+
+## 创建输出目录
+
+```{r create-dirs}
+# 创建输出目录结构
+dirs <- list(
+  base = OUTPUT_DIR,
+  data = file.path(OUTPUT_DIR, "data"),
+  robjects = file.path(OUTPUT_DIR, "Robjects"),
+  plots = file.path(OUTPUT_DIR, "Plots"),
+  trajectory = file.path(OUTPUT_DIR, "Plots", "Trajectory"),
+  pseudotime = file.path(OUTPUT_DIR, "Plots", "Pseudotime"),
+  genes = file.path(OUTPUT_DIR, "Plots", "Genes"),
+  qc = file.path(OUTPUT_DIR, "Plots", "QC"),
+  tables = file.path(OUTPUT_DIR, "Tables")
+)
+
+# 创建所有目录
+for (dir_path in dirs) {
+  dir.create(dir_path, recursive = TRUE, showWarnings = FALSE)
+}
+
+cat("✓ 输出目录创建成功:", OUTPUT_DIR, "\n")
+```
+
+---
+
+# 数据加载 {.tabset}
+
+## 加载Seurat对象
+
+```{r load-seurat}
+cat("="*80, "\n", sep="")
+cat("加载Seurat对象\n")
+cat("="*80, "\n", sep="")
+
+# 输入文件路径
+input_file <- file.path("results", MODE, "Robjects", "seurat_obj_annotated.rds")
+
+if (!file.exists(input_file)) {
+  stop("错误：输入文件不存在 - ", input_file,
+       "\n请先运行 4.downstream_analysis.Rmd")
+}
+
+# 加载Seurat对象
+cat("正在加载:", input_file, "\n")
+seurat_obj <- readRDS(input_file)
+
+cat("✓ 加载成功\n")
+cat("  细胞数:", ncol(seurat_obj), "\n")
+cat("  基因数:", nrow(seurat_obj), "\n")
+
+# 显示可用的降维
+reductions <- names(seurat_obj@reductions)
+cat("  可用降维:", paste(reductions, collapse=", "), "\n")
+
+# 显示可用的注释列
+metadata_cols <- colnames(seurat_obj@meta.data)
+annotation_cols <- metadata_cols[grepl("annotation|cluster", metadata_cols, ignore.case=TRUE)]
+cat("  注释列:", paste(annotation_cols, collapse=", "), "\n")
+```
+
+## 数据质控
+
+```{r qc-data}
+cat("\n数据质控\n")
+cat("="*80, "\n", sep="")
+
+# 保存QC前的细胞数
+n_cells_before <- ncol(seurat_obj)
+
+# 基础QC
+seurat_obj <- subset(seurat_obj,
+                     subset = nFeature_RNA > MIN_GENES &
+                             nFeature_RNA < MAX_GENES &
+                             nCount_RNA > MIN_UMI)
+
+n_cells_after <- ncol(seurat_obj)
+n_removed <- n_cells_before - n_cells_after
+
+cat("QC过滤:\n")
+cat("  过滤前:", n_cells_before, "细胞\n")
+cat("  过滤后:", n_cells_after, "细胞\n")
+cat("  移除:", n_removed, "细胞 (",
+    round(n_removed/n_cells_before*100, 2), "%)\n")
+
+# 检查细胞类型分布
+if (CELL_TYPE_COL %in% colnames(seurat_obj@meta.data)) {
+  cat("\n细胞类型分布:\n")
+  cell_counts <- table(seurat_obj@meta.data[[CELL_TYPE_COL]])
+  print(cell_counts)
+} else {
+  stop("错误：未找到细胞类型列 '", CELL_TYPE_COL, "'")
+}
+
+cat("\n✓ 数据质控完成\n")
+```
+
+## 转换为SingleCellExperiment
+
+```{r convert-to-sce}
+cat("\n转换为SingleCellExperiment对象\n")
+cat("="*80, "\n", sep="")
+
+# 转换为SingleCellExperiment对象
+sce <- as.SingleCellExperiment(seurat_obj)
+
+cat("✓ 转换成功\n")
+cat("  Assays:", paste(assayNames(sce), collapse=", "), "\n")
+cat("  Reductions:", paste(reducedDimNames(sce), collapse=", "), "\n")
+
+# 添加细胞类型到colData
+sce$cell_type <- seurat_obj@meta.data[[CELL_TYPE_COL]]
+
+# 确保细胞类型是factor
+sce$cell_type <- factor(sce$cell_type)
+
+cat("  细胞类型数:", length(levels(sce$cell_type)), "\n")
+cat("  细胞类型:", paste(levels(sce$cell_type), collapse=", "), "\n")
+```
+
+---
+
+# Slingshot 轨迹分析 {.tabset}
+
+## 选择降维空间
+
+```{r select-reduction}
+cat("\n选择降维空间用于轨迹推断\n")
+cat("="*80, "\n", sep="")
+
+# UMAP名称映射
+umap_mapping <- list(
+  rna = "UMAP",
+  adt = "ADT_UMAP",
+  wnn = "WNN_UMAP"
+)
+
+# 获取实际的UMAP名称
+reduction_name <- umap_mapping[[PRIMARY_UMAP]]
+
+# 检查是否存在
+available_reductions <- reducedDimNames(sce)
+
+if (!reduction_name %in% available_reductions) {
+  cat("⚠ 警告:", reduction_name, "不存在\n")
+  cat("  可用降维:", paste(available_reductions, collapse=", "), "\n")
+
+  # 尝试替代方案
+  if ("WNN_UMAP" %in% available_reductions) {
+    reduction_name <- "WNN_UMAP"
+    cat("  使用替代方案: WNN_UMAP\n")
+  } else if ("UMAP" %in% available_reductions) {
+    reduction_name <- "UMAP"
+    cat("  使用替代方案: UMAP\n")
+  } else {
+    stop("错误：未找到任何UMAP降维")
+  }
+}
+
+cat("✓ 使用降维:", reduction_name, "\n")
+
+# 提取UMAP坐标
+umap_coords <- reducedDim(sce, reduction_name)
+cat("  UMAP维度:", ncol(umap_coords), "\n")
+cat("  细胞数:", nrow(umap_coords), "\n")
+```
+
+## 自动检测起点和终点
+
+```{r detect-endpoints}
+cat("\n检测轨迹起点和终点\n")
+cat("="*80, "\n", sep="")
+
+# 如果未指定起点，自动检测
+if (is.null(START_CLUSTER)) {
+  # 可能的起点细胞类型
+  potential_starts <- c("Pre-cDC1s", "Pre-cDC2s", "pre-cDC1", "pre-cDC2",
+                       "Progenitor", "progenitor", "Early")
+
+  found_starts <- potential_starts[potential_starts %in% levels(sce$cell_type)]
+
+  if (length(found_starts) > 0) {
+    START_CLUSTER <- found_starts[1]
+    cat("✓ 自动检测起点:", START_CLUSTER, "\n")
+  } else {
+    # 使用第一个细胞类型
+    START_CLUSTER <- levels(sce$cell_type)[1]
+    cat("⚠ 未找到典型起点，使用:", START_CLUSTER, "\n")
+  }
+} else {
+  cat("✓ 使用指定起点:", START_CLUSTER, "\n")
+}
+
+# 如果未指定终点，自动检测
+if (is.null(END_CLUSTER)) {
+  # 可能的终点细胞类型
+  potential_ends <- c("Mature cDC1", "Mature cDC2", "mature", "Mature",
+                     "Terminal", "terminal")
+
+  found_ends <- potential_ends[potential_ends %in% levels(sce$cell_type)]
+
+  if (length(found_ends) > 0) {
+    END_CLUSTER <- found_ends
+    cat("✓ 自动检测终点:", paste(END_CLUSTER, collapse=", "), "\n")
+  } else {
+    cat("⚠ 未指定终点，将推断所有可能路径\n")
+    END_CLUSTER <- NULL
+  }
+} else {
+  cat("✓ 使用指定终点:", paste(END_CLUSTER, collapse=", "), "\n")
+}
+```
+
+## 运行Slingshot
+
+```{r run-slingshot}
+cat("\nSlingshot 轨迹推断\n")
+cat("="*80, "\n", sep="")
+
+# 运行Slingshot
+cat("正在运行Slingshot...\n")
+
+sds <- slingshot(
+  sce,
+  clusterLabels = "cell_type",
+  reducedDim = reduction_name,
+  start.clus = START_CLUSTER,
+  end.clus = END_CLUSTER,
+  omega = OMEGA,
+  shrink = SHRINK,
+  extend = EXTEND,
+  thresh = THRESH
+)
+
+cat("✓ Slingshot分析完成\n")
+
+# 提取结果
+n_lineages <- length(slingLineages(sds))
+cat("  检测到", n_lineages, "条谱系（lineages）\n")
+
+# 显示谱系路径
+for (i in 1:n_lineages) {
+  lineage <- slingLineages(sds)[[i]]
+  cat("  Lineage", i, ":", paste(lineage, collapse=" → "), "\n")
+}
+
+# 提取伪时间
+pseudotime_mat <- slingPseudotime(sds)
+cat("\n伪时间矩阵:\n")
+cat("  维度:", nrow(pseudotime_mat), "×", ncol(pseudotime_mat), "\n")
+cat("  (细胞数 × 谱系数)\n")
+
+# 提取细胞权重
+weights_mat <- slingCurveWeights(sds)
+cat("\n细胞权重矩阵:\n")
+cat("  维度:", nrow(weights_mat), "×", ncol(weights_mat), "\n")
+```
+
+## 添加伪时间到对象
+
+```{r add-pseudotime}
+cat("\n添加伪时间到对象\n")
+cat("="*80, "\n", sep="")
+
+# 添加伪时间到SCE
+for (i in 1:ncol(pseudotime_mat)) {
+  col_name <- paste0("slingPseudotime_", i)
+  sce[[col_name]] <- pseudotime_mat[, i]
+  cat("  添加:", col_name, "\n")
+}
+
+# 添加细胞权重
+for (i in 1:ncol(weights_mat)) {
+  col_name <- paste0("slingWeight_", i)
+  sce[[col_name]] <- weights_mat[, i]
+  cat("  添加:", col_name, "\n")
+}
+
+# 添加主要伪时间（如果有多条谱系，使用权重平均）
+if (ncol(pseudotime_mat) == 1) {
+  sce$slingPseudotime_main <- pseudotime_mat[, 1]
+} else {
+  # 加权平均
+  weighted_pt <- rowSums(pseudotime_mat * weights_mat, na.rm = TRUE) /
+                 rowSums(weights_mat, na.rm = TRUE)
+  sce$slingPseudotime_main <- weighted_pt
+}
+
+cat("\n✓ 伪时间添加完成\n")
+cat("  主伪时间范围:", round(range(sce$slingPseudotime_main, na.rm=TRUE), 3), "\n")
+```
+
+---
+
+# 结果可视化 {.tabset}
+
+## 轨迹图（所有UMAP空间）
+
+```{r plot-trajectories-all-umaps, fig.width=16, fig.height=12}
+cat("\n绘制所有UMAP空间的轨迹图\n")
+cat("="*80, "\n", sep="")
+
+# 定义所有UMAP空间
+all_umaps <- list(
+  list(name = "UMAP", label = "RNA UMAP", suffix = "rna_umap"),
+  list(name = "ADT_UMAP", label = "ADT UMAP", suffix = "adt_umap"),
+  list(name = "WNN_UMAP", label = "WNN UMAP", suffix = "wnn_umap")
+)
+
+# 为每个UMAP空间绘图
+for (umap_info in all_umaps) {
+  umap_name <- umap_info$name
+
+  # 检查是否存在
+  if (!umap_name %in% reducedDimNames(sce)) {
+    cat("  跳过:", umap_name, "(不存在)\n")
+    next
+  }
+
+  cat("  绘制:", umap_info$label, "\n")
+
+  # 提取UMAP坐标
+  umap_df <- as.data.frame(reducedDim(sce, umap_name))
+  colnames(umap_df) <- c("UMAP_1", "UMAP_2")
+  umap_df$cell_type <- sce$cell_type
+  umap_df$pseudotime <- sce$slingPseudotime_main
+
+  # 绘制轨迹图
+  p <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2)) +
+    geom_point(aes(color = cell_type), size = POINT_SIZE, alpha = ALPHA) +
+    scale_color_brewer(palette = "Set2", name = "Cell Type") +
+    labs(
+      title = paste0(MODE, " Development Trajectory - ", umap_info$label),
+      subtitle = paste0("Slingshot trajectory inference (", n_lineages, " lineage",
+                       ifelse(n_lineages > 1, "s", ""), ")"),
+      x = "UMAP 1",
+      y = "UMAP 2"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(face = "bold", size = 16),
+      plot.subtitle = element_text(size = 12, color = "gray40")
+    )
+
+  # 添加Slingshot曲线
+  # 提取曲线坐标
+  for (curve_idx in 1:n_lineages) {
+    curve <- slingCurves(sds)[[curve_idx]]
+    curve_coords <- curve$s[curve$ord, ]
+
+    # 将曲线坐标转换到当前UMAP空间
+    # 注意：如果reduction_name != umap_name，可能需要重新运行Slingshot
+    # 这里假设我们只在主UMAP上运行了Slingshot
+    if (umap_name == reduction_name) {
+      curve_df <- as.data.frame(curve_coords)
+      colnames(curve_df) <- c("UMAP_1", "UMAP_2")
+
+      p <- p +
+        geom_path(data = curve_df,
+                 aes(x = UMAP_1, y = UMAP_2),
+                 color = "black",
+                 size = 2,
+                 alpha = 0.8,
+                 lineend = "round") +
+        geom_path(data = curve_df,
+                 aes(x = UMAP_1, y = UMAP_2),
+                 color = viridis(n_lineages)[curve_idx],
+                 size = 1.5,
+                 alpha = 0.9,
+                 lineend = "round")
+    }
+  }
+
+  # 保存图片
+  output_file <- file.path(dirs$trajectory,
+                          paste0("trajectory_", umap_info$suffix, ".png"))
+  ggsave(output_file, plot = p, width = 12, height = 10, dpi = 300)
+  cat("    保存:", output_file, "\n")
+
+  # 显示图片
+  print(p)
+}
+```
+
+## 伪时间图（所有UMAP空间）
+
+```{r plot-pseudotime-all-umaps, fig.width=16, fig.height=12}
+cat("\n绘制所有UMAP空间的伪时间图\n")
+cat("="*80, "\n", sep="")
+
+# 为每个UMAP空间绘制伪时间
+for (umap_info in all_umaps) {
+  umap_name <- umap_info$name
+
+  if (!umap_name %in% reducedDimNames(sce)) {
+    next
+  }
+
+  cat("  绘制:", umap_info$label, "\n")
+
+  # 提取数据
+  umap_df <- as.data.frame(reducedDim(sce, umap_name))
+  colnames(umap_df) <- c("UMAP_1", "UMAP_2")
+  umap_df$pseudotime <- sce$slingPseudotime_main
+  umap_df$cell_type <- sce$cell_type
+
+  # 绘制伪时间图
+  p <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2)) +
+    geom_point(aes(color = pseudotime), size = POINT_SIZE, alpha = ALPHA) +
+    scale_color_viridis(option = "magma", name = "Pseudotime",
+                       na.value = "gray90") +
+    labs(
+      title = paste0(MODE, " Pseudotime - ", umap_info$label),
+      subtitle = "Developmental progression along trajectory",
+      x = "UMAP 1",
+      y = "UMAP 2"
+    ) +
+    theme_classic(base_size = 14) +
+    theme(
+      legend.position = "right",
+      plot.title = element_text(face = "bold", size = 16),
+      plot.subtitle = element_text(size = 12, color = "gray40")
+    )
+
+  # 保存图片
+  output_file <- file.path(dirs$pseudotime,
+                          paste0("pseudotime_", umap_info$suffix, ".png"))
+  ggsave(output_file, plot = p, width = 12, height = 10, dpi = 300)
+  cat("    保存:", output_file, "\n")
+
+  # 显示图片
+  print(p)
+}
+```
+
+## 伪时间分布
+
+```{r plot-pseudotime-distribution, fig.width=12, fig.height=6}
+cat("\n绘制伪时间分布图\n")
+cat("="*80, "\n", sep="")
+
+# 准备数据
+pt_df <- data.frame(
+  cell_type = sce$cell_type,
+  pseudotime = sce$slingPseudotime_main
+)
+
+# 小提琴图
+p1 <- ggplot(pt_df, aes(x = cell_type, y = pseudotime)) +
+  geom_violin(aes(fill = cell_type), alpha = 0.7, scale = "width") +
+  geom_boxplot(width = 0.2, alpha = 0.5, outlier.shape = NA) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = paste0(MODE, " Pseudotime Distribution by Cell Type"),
+    x = "Cell Type",
+    y = "Slingshot Pseudotime"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  )
+
+# 直方图
+p2 <- ggplot(pt_df, aes(x = pseudotime)) +
+  geom_histogram(aes(fill = cell_type), bins = 50, alpha = 0.7) +
+  scale_fill_brewer(palette = "Set2", name = "Cell Type") +
+  labs(
+    title = "Pseudotime Distribution",
+    x = "Slingshot Pseudotime",
+    y = "Number of Cells"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
+
+# 组合图
+p_combined <- p1 + p2 + plot_layout(widths = c(2, 1))
+
+# 保存
+output_file <- file.path(dirs$pseudotime, "pseudotime_distribution.png")
+ggsave(output_file, plot = p_combined, width = 14, height = 6, dpi = 300)
+cat("  保存:", output_file, "\n")
+
+# 显示
+print(p_combined)
+```
+
+## 标志基因沿轨迹表达
+
+```{r plot-marker-genes, fig.width=14, fig.height=10}
+cat("\n绘制标志基因沿轨迹的表达\n")
+cat("="*80, "\n", sep="")
+
+# 定义cDC标志基因
+marker_genes <- list(
+  proliferation = c("Mki67", "Top2a", "Pcna"),
+  cDC1_specific = c("Xcr1", "Clec9a", "Batf3", "Irf8"),
+  cDC2_specific = c("Sirpa", "Cd172a", "Irf4", "Klf4"),
+  maturation = c("Cd80", "Cd86", "H2-Aa", "H2-Ab1"),
+  migration = c("Ccr7", "Fscn1", "Cd40"),
+  functional = c("Il12b", "Cxcl9", "Il10")
+)
+
+# 展平基因列表
+all_markers <- unique(unlist(marker_genes))
+
+# 检查哪些基因存在于数据中
+available_markers <- all_markers[all_markers %in% rownames(sce)]
+
+cat("  可用标志基因:", length(available_markers), "/", length(all_markers), "\n")
+
+if (length(available_markers) > 0) {
+  # 准备绘图数据
+  plot_list <- list()
+
+  for (gene in available_markers[1:min(12, length(available_markers))]) {
+    # 提取表达数据
+    expr <- logcounts(sce)[gene, ]
+
+    plot_df <- data.frame(
+      pseudotime = sce$slingPseudotime_main,
+      expression = as.numeric(expr),
+      cell_type = sce$cell_type
+    )
+
+    # 绘图
+    p <- ggplot(plot_df, aes(x = pseudotime, y = expression)) +
+      geom_point(aes(color = cell_type), size = 1, alpha = 0.5) +
+      geom_smooth(method = "loess", color = "black", size = 1.5, se = TRUE) +
+      scale_color_brewer(palette = "Set2") +
+      labs(
+        title = gene,
+        x = "Pseudotime",
+        y = "Expression"
+      ) +
+      theme_classic(base_size = 10) +
+      theme(
+        legend.position = "none",
+        plot.title = element_text(face = "bold", hjust = 0.5)
+      )
+
+    plot_list[[gene]] <- p
+  }
+
+  # 组合图
+  p_combined <- wrap_plots(plot_list, ncol = 3)
+
+  # 保存
+  output_file <- file.path(dirs$genes, "markers_along_trajectory.png")
+  ggsave(output_file, plot = p_combined, width = 14, height = 10, dpi = 300)
+  cat("  保存:", output_file, "\n")
+
+  # 显示
+  print(p_combined)
+} else {
+  cat("  ⚠ 未找到标志基因，跳过绘图\n")
+}
+```
+
+---
+
+# 差异分析 {.tabset}
+
+## 识别轨迹相关基因
+
+```{r identify-trajectory-genes}
+cat("\n识别轨迹相关基因\n")
+cat("="*80, "\n", sep="")
+
+# 使用tradeSeq进行差异分析（如果安装）
+if (requireNamespace("tradeSeq", quietly = TRUE)) {
+  cat("使用tradeSeq识别轨迹相关基因...\n")
+
+  # TODO: 完整的tradeSeq分析
+  # 这里提供简化版本
+
+  cat("  ⚠ tradeSeq分析较复杂，建议单独运行\n")
+} else {
+  cat("  ⚠ tradeSeq未安装，使用简化方法\n\n")
+
+  # 简化方法：基于伪时间相关性
+  cat("使用相关性方法识别轨迹相关基因...\n")
+
+  # 计算每个基因与伪时间的相关性
+  expr_mat <- as.matrix(logcounts(sce))
+  pseudotime_vec <- sce$slingPseudotime_main
+
+  # 去除NA
+  valid_cells <- !is.na(pseudotime_vec)
+  expr_mat <- expr_mat[, valid_cells]
+  pseudotime_vec <- pseudotime_vec[valid_cells]
+
+  # 计算相关性
+  cat("  计算基因-伪时间相关性...\n")
+
+  correlations <- apply(expr_mat, 1, function(gene_expr) {
+    if (sum(gene_expr > 0) < 10) return(c(cor = 0, pval = 1))
+
+    test <- cor.test(gene_expr, pseudotime_vec, method = "spearman")
+    c(cor = test$estimate, pval = test$p.value)
+  })
+
+  # 整理结果
+  cor_results <- data.frame(
+    gene = rownames(expr_mat),
+    correlation = correlations[1, ],
+    pvalue = correlations[2, ],
+    stringsAsFactors = FALSE
+  )
+
+  # 调整p值
+  cor_results$padj <- p.adjust(cor_results$pvalue, method = "fdr")
+
+  # 排序
+  cor_results <- cor_results[order(abs(cor_results$correlation), decreasing = TRUE), ]
+
+  # 筛选显著基因
+  sig_genes <- cor_results[cor_results$padj < PVAL_THRESHOLD &
+                           abs(cor_results$correlation) > 0.3, ]
+
+  cat("  显著基因数:", nrow(sig_genes), "\n")
+  cat("  正相关基因:", sum(sig_genes$correlation > 0), "\n")
+  cat("  负相关基因:", sum(sig_genes$correlation < 0), "\n")
+
+  # 保存结果
+  output_file <- file.path(dirs$tables, "trajectory_genes.csv")
+  write.csv(cor_results, output_file, row.names = FALSE)
+  cat("  保存:", output_file, "\n")
+
+  # 显示top基因
+  cat("\nTop 10 正相关基因:\n")
+  print(head(sig_genes[sig_genes$correlation > 0, ], 10))
+
+  cat("\nTop 10 负相关基因:\n")
+  print(head(sig_genes[sig_genes$correlation < 0, ], 10))
+}
+```
+
+## 轨迹基因热图
+
+```{r plot-trajectory-heatmap, fig.width=10, fig.height=12}
+cat("\n绘制轨迹基因热图\n")
+cat("="*80, "\n", sep="")
+
+if (exists("sig_genes") && nrow(sig_genes) > 0) {
+  # 选择top基因
+  top_genes <- head(sig_genes, N_TOP_GENES)
+
+  cat("  绘制", nrow(top_genes), "个基因\n")
+
+  # 提取表达数据
+  expr_subset <- as.matrix(logcounts(sce)[top_genes$gene, ])
+
+  # 按伪时间排序细胞
+  cell_order <- order(sce$slingPseudotime_main, na.last = NA)
+  expr_subset <- expr_subset[, cell_order]
+
+  # 按基因相关性排序
+  gene_order <- order(top_genes$correlation, decreasing = TRUE)
+  expr_subset <- expr_subset[gene_order, ]
+
+  # Z-score标准化
+  expr_scaled <- t(scale(t(expr_subset)))
+
+  # 准备注释
+  cell_annotation <- data.frame(
+    cell_type = sce$cell_type[cell_order],
+    pseudotime = sce$slingPseudotime_main[cell_order]
+  )
+  rownames(cell_annotation) <- colnames(expr_scaled)
+
+  # 绘制热图
+  output_file <- file.path(dirs$genes, "trajectory_genes_heatmap.png")
+
+  png(output_file, width = 10, height = 12, units = "in", res = 300)
+
+  pheatmap(
+    expr_scaled,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    show_colnames = FALSE,
+    show_rownames = TRUE,
+    annotation_col = cell_annotation,
+    color = colorRampPalette(c("blue", "white", "red"))(100),
+    breaks = seq(-2, 2, length.out = 101),
+    main = paste0(MODE, " - Trajectory-associated Genes"),
+    fontsize_row = 8,
+    annotation_colors = list(
+      cell_type = setNames(brewer.pal(length(unique(cell_annotation$cell_type)), "Set2"),
+                          unique(cell_annotation$cell_type))
+    )
+  )
+
+  dev.off()
+
+  cat("  保存:", output_file, "\n")
+} else {
+  cat("  ⚠ 未找到显著轨迹基因，跳过热图\n")
+}
+```
+
+---
+
+# 结果导出 {.tabset}
+
+## 保存Slingshot对象
+
+```{r save-slingshot}
+cat("\n保存Slingshot对象\n")
+cat("="*80, "\n", sep="")
+
+# 保存Slingshot对象
+output_file <- file.path(dirs$data, "slingshot_object.rds")
+saveRDS(sds, output_file)
+cat("✓ 保存Slingshot对象:", output_file, "\n")
+
+# 保存添加了伪时间的SCE对象
+output_file <- file.path(dirs$robjects, "sce_with_pseudotime.rds")
+saveRDS(sce, output_file)
+cat("✓ 保存SCE对象:", output_file, "\n")
+
+# 保存添加了伪时间的Seurat对象
+# 将伪时间添加回Seurat对象
+seurat_obj$slingshot_pseudotime <- sce$slingPseudotime_main
+
+for (i in 1:ncol(pseudotime_mat)) {
+  seurat_obj[[paste0("slingshot_pseudotime_", i)]] <- pseudotime_mat[, i]
+  seurat_obj[[paste0("slingshot_weight_", i)]] <- weights_mat[, i]
+}
+
+output_file <- file.path(dirs$robjects, "seurat_with_pseudotime.rds")
+saveRDS(seurat_obj, output_file)
+cat("✓ 保存Seurat对象:", output_file, "\n")
+```
+
+## 导出CSV表格
+
+```{r export-tables}
+cat("\n导出CSV表格\n")
+cat("="*80, "\n", sep="")
+
+# 1. 伪时间表格
+pseudotime_df <- data.frame(
+  cell_id = colnames(sce),
+  cell_type = sce$cell_type,
+  pseudotime = sce$slingPseudotime_main
+)
+
+# 添加各谱系伪时间
+for (i in 1:ncol(pseudotime_mat)) {
+  pseudotime_df[[paste0("pseudotime_lineage_", i)]] <- pseudotime_mat[, i]
+}
+
+output_file <- file.path(dirs$tables, "pseudotime_by_cell.csv")
+write.csv(pseudotime_df, output_file, row.names = FALSE)
+cat("✓ 导出伪时间表格:", output_file, "\n")
+cat("  行数:", nrow(pseudotime_df), "\n")
+
+# 2. 细胞权重表格
+weights_df <- data.frame(
+  cell_id = colnames(sce),
+  cell_type = sce$cell_type
+)
+
+for (i in 1:ncol(weights_mat)) {
+  weights_df[[paste0("weight_lineage_", i)]] <- weights_mat[, i]
+}
+
+output_file <- file.path(dirs$tables, "cell_weights.csv")
+write.csv(weights_df, output_file, row.names = FALSE)
+cat("✓ 导出细胞权重:", output_file, "\n")
+
+# 3. 轨迹基因（如果已计算）
+if (exists("cor_results")) {
+  output_file <- file.path(dirs$tables, "trajectory_genes.csv")
+  write.csv(cor_results, output_file, row.names = FALSE)
+  cat("✓ 导出轨迹基因:", output_file, "\n")
+  cat("  基因数:", nrow(cor_results), "\n")
+}
+
+cat("\n✓ 所有表格导出完成\n")
+```
+
+## 生成分析总结
+
+```{r summary}
+cat("\n" , "="*80, "\n", sep="")
+cat("SLINGSHOT 分析总结\n")
+cat("="*80, "\n\n", sep="")
+
+cat("分析参数:\n")
+cat("  模式:", MODE, "\n")
+cat("  主要UMAP:", PRIMARY_UMAP, "\n")
+cat("  细胞类型列:", CELL_TYPE_COL, "\n")
+cat("  起点细胞:", START_CLUSTER, "\n")
+cat("  终点细胞:", paste(END_CLUSTER, collapse=", "), "\n\n")
+
+cat("数据统计:\n")
+cat("  细胞数:", ncol(sce), "\n")
+cat("  基因数:", nrow(sce), "\n")
+cat("  细胞类型数:", length(unique(sce$cell_type)), "\n\n")
+
+cat("Slingshot结果:\n")
+cat("  谱系数:", n_lineages, "\n")
+for (i in 1:n_lineages) {
+  lineage <- slingLineages(sds)[[i]]
+  cat("  Lineage", i, ":", paste(lineage, collapse=" → "), "\n")
+}
+cat("\n")
+
+cat("伪时间范围:\n")
+cat("  主伪时间:", round(range(sce$slingPseudotime_main, na.rm=TRUE), 3), "\n\n")
+
+if (exists("sig_genes")) {
+  cat("差异分析:\n")
+  cat("  显著基因数:", nrow(sig_genes), "\n")
+  cat("  正相关基因:", sum(sig_genes$correlation > 0), "\n")
+  cat("  负相关基因:", sum(sig_genes$correlation < 0), "\n\n")
+}
+
+cat("输出文件:\n")
+cat("  输出目录:", OUTPUT_DIR, "\n")
+cat("  轨迹图:", length(list.files(dirs$trajectory)), "个\n")
+cat("  伪时间图:", length(list.files(dirs$pseudotime)), "个\n")
+cat("  基因图:", length(list.files(dirs$genes)), "个\n")
+cat("  CSV表格:", length(list.files(dirs$tables)), "个\n\n")
+
+cat("="*80, "\n", sep="")
+cat("分析完成！\n")
+cat("="*80, "\n", sep="")
+```
+
+---
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
