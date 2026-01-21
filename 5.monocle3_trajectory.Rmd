@@ -543,11 +543,16 @@ if (!umap_name %in% reducedDimNames(cds)) {
 
 cat("使用降维:", umap_name, "\n")
 
+# 将选中的UMAP设置为标准名称"UMAP"（Monocle3要求）
+cat("\n设置主UMAP为标准名称...\n")
+reducedDim(cds, "UMAP") <- reducedDim(cds, umap_name)
+cat("  ✓ 已将", umap_name, "设置为 UMAP\n")
+
 # 运行聚类（learn_graph 需要）
 cat("\n进行细胞聚类...\n")
-cds <- cluster_cells(cds, reduction_method = umap_name)
+cds <- cluster_cells(cds, reduction_method = "UMAP")
 
-cat("  检测到", length(unique(cds@clusters[[umap_name]]$clusters)), "个聚类\n")
+cat("  检测到", length(unique(cds@clusters$UMAP$clusters)), "个聚类\n")
 
 # 学习轨迹图
 if (USE_PARTITION) {
