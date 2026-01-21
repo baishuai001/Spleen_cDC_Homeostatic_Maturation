@@ -599,8 +599,8 @@ if (is.null(START_CELL_TYPE)) {
   cat("✓ 使用指定起点:", START_CELL_TYPE, "\n")
 }
 
-# 获取起点细胞
-start_cells <- which(cds$cell_type == START_CELL_TYPE)
+# 获取起点细胞（使用细胞名称，不是索引）
+start_cells <- colnames(cds)[cds$cell_type == START_CELL_TYPE]
 
 if (length(start_cells) == 0) {
   stop("错误：未找到起点细胞类型 '", START_CELL_TYPE, "'")
@@ -611,7 +611,8 @@ cat("起点细胞数:", length(start_cells), "\n")
 # 排序细胞
 cat("正在计算伪时间...\n")
 
-# 使用起点细胞的质心作为根节点
+# 使用起点细胞作为根节点
+# order_cells 会自动找到这些细胞在图上最近的节点作为起点
 cds <- order_cells(cds, root_cells = start_cells)
 
 # 检查伪时间
