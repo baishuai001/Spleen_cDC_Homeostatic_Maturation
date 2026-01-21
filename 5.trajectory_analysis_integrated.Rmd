@@ -838,8 +838,7 @@ cat("✓ Monocle3 CDS对象已保存\n\n")
 cat("【Monocle3】生成轨迹可视化\n\n")
 
 # 函数：绘制轨迹
-plot_monocle3_trajectory <- function(cds, reduction_name, color_by = "pseudotime",
-                                     show_labels = TRUE) {
+plot_monocle3_trajectory <- function(cds, reduction_name, color_by = "pseudotime") {
   if (!reduction_name %in% names(reducedDims(cds))) {
     return(NULL)
   }
@@ -849,9 +848,8 @@ plot_monocle3_trajectory <- function(cds, reduction_name, color_by = "pseudotime
     reduction_method = reduction_name,
     color_cells_by = color_by,
     label_cell_groups = FALSE,
-    label_leaves = !show_labels,
-    label_branch_points = !show_labels,
-    label_principal_points = show_labels,
+    label_leaves = FALSE,
+    label_branch_points = FALSE,
     cell_size = point_size,
     alpha = point_alpha
   ) +
@@ -867,44 +865,23 @@ plot_monocle3_trajectory <- function(cds, reduction_name, color_by = "pseudotime
 # 主要轨迹可视化（基于选择的 UMAP）⭐
 # 使用标准 "UMAP" 名称，已从用户选择的 UMAP 空间复制
 if ("UMAP" %in% names(reducedDims(cds))) {
-  # === 版本1：带标签的轨迹图 ===
-  p1_labeled <- plot_monocle3_trajectory(cds, "UMAP", "pseudotime", show_labels = TRUE) +
+  p1 <- plot_monocle3_trajectory(cds, "UMAP", "pseudotime") +
     ggtitle(sprintf("Monocle3: %s UMAP - Pseudotime", toupper(selected_umap_monocle3))) +
     scale_color_viridis(option = "viridis")
 
-  p2_labeled <- plot_monocle3_trajectory(cds, "UMAP", "cell_type", show_labels = TRUE) +
+  p2 <- plot_monocle3_trajectory(cds, "UMAP", "cell_type") +
     ggtitle(sprintf("Monocle3: %s UMAP - Cell Type", toupper(selected_umap_monocle3)))
 
-  combined_labeled <- p1_labeled + p2_labeled
-  print(combined_labeled)
+  combined <- p1 + p2
+  print(combined)
 
-  # === 版本2：不带标签的轨迹图 ===
-  p1_clean <- plot_monocle3_trajectory(cds, "UMAP", "pseudotime", show_labels = FALSE) +
-    ggtitle(sprintf("Monocle3: %s UMAP - Pseudotime (Clean)", toupper(selected_umap_monocle3))) +
-    scale_color_viridis(option = "viridis")
-
-  p2_clean <- plot_monocle3_trajectory(cds, "UMAP", "cell_type", show_labels = FALSE) +
-    ggtitle(sprintf("Monocle3: %s UMAP - Cell Type (Clean)", toupper(selected_umap_monocle3)))
-
-  combined_clean <- p1_clean + p2_clean
-  print(combined_clean)
-
-  # === 保存图片 ===
-  # 保存带标签版本
   filename <- sprintf("trajectory_%s_umap.png", tolower(selected_umap_monocle3))
   ggsave(
     file.path(output_dir, "Plots", "Monocle3", filename),
-    combined_labeled, width = 14, height = 6, dpi = 300
+    combined, width = 14, height = 6, dpi = 300
   )
 
-  # 保存不带标签版本（clean）
-  filename_clean <- sprintf("trajectory_%s_umap_clean.png", tolower(selected_umap_monocle3))
-  ggsave(
-    file.path(output_dir, "Plots", "Monocle3", filename_clean),
-    combined_clean, width = 14, height = 6, dpi = 300
-  )
-
-  cat(sprintf("✓ Monocle3 轨迹图已保存（带标签和clean版本）(%s UMAP)\n\n", toupper(selected_umap_monocle3)))
+  cat(sprintf("✓ Monocle3 轨迹图已保存 (%s UMAP)\n\n", toupper(selected_umap_monocle3)))
 }
 
 <!--
