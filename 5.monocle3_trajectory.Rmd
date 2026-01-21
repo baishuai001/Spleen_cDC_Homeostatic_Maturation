@@ -1,0 +1,1150 @@
+---
+title: "Monocle3 轨迹分析 - cDC 发育轨迹推断"
+author: "GSE228544 CITE-seq Analysis Pipeline"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 4
+    number_sections: true
+    theme: cosmo
+    code_folding: show
+    df_print: paged
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 12,
+  fig.height = 10,
+  dpi = 300
+)
+```
+
+# 脚本说明 {.tabset}
+
+## 概述
+
+本脚本使用 **Monocle3** 进行 cDC 发育轨迹分析。
+
+### Monocle3 简介
+
+**Monocle3** 是最流行的单细胞轨迹分析工具之一，采用图学习方法构建复杂的发育轨迹。
+
+#### 核心优势
+
+| 特性 | 说明 | 优势 |
+|------|------|------|
+| **图学习** | 基于UMAP图结构 | 适应复杂拓扑 ⭐ |
+| **分支检测** | 自动识别分支点 | 精确定位决策点 |
+| **基因分析** | graph_test()差异分析 | 识别关键调控基因 |
+| **可扩展性** | 支持大数据集 | 处理10万+细胞 |
+| **丰富可视化** | 多种绘图函数 | 展示效果好 |
+
+#### 与其他方法对比
+
+| 方法 | Slingshot | **Monocle3** | PAGA |
+|------|-----------|------------|------|
+| 速度 | 非常快 | **中等** | 快 |
+| 算法 | 主曲线 | **图学习** ⭐ | 图抽象 |
+| 适用拓扑 | 树状 | **任意拓扑** ⭐ | 任意拓扑 |
+| 分支分析 | 基础 | **强大** ⭐ | 中等 |
+| 学习曲线 | 简单 | **中等** | 中等 |
+
+### 主要功能
+
+1. **三种UMAP空间完整支持**
+   - RNA UMAP（基于基因表达）
+   - ADT UMAP（基于表面蛋白）
+   - WNN UMAP（加权整合，推荐）⭐
+
+2. **轨迹推断**
+   - 基于UMAP的图学习
+   - 主路径识别
+   - 分支点检测
+   - 伪时间计算
+
+3. **差异分析**
+   - 轨迹依赖基因（graph_test）
+   - 分支依赖基因
+   - 模块化基因集识别
+
+4. **多模式支持**
+   - cDC1 特异分析
+   - cDC2 特异分析
+   - 整合分析
+
+### 输入数据
+
+- **来源：** `4.downstream_analysis.Rmd` 输出
+- **文件：** `results/{mode}/Robjects/seurat_obj_annotated.rds`
+- **内容：** 完整Seurat对象，包含RNA/ADT/WNN降维、细胞注释等
+
+### 输出结果
+
+```
+monocle3_analysis_{mode}/
+├── data/
+│   └── cds_object.rds                 # Monocle3 CDS对象
+├── Robjects/
+│   ├── seurat_with_pseudotime.rds     # 添加伪时间的Seurat对象
+│   └── trajectory_genes.rds           # 轨迹相关基因
+├── Plots/
+│   ├── Trajectory/                    # 轨迹图
+│   │   ├── trajectory_rna_umap.png    # RNA UMAP轨迹
+│   │   ├── trajectory_adt_umap.png    # ADT UMAP轨迹
+│   │   ├── trajectory_wnn_umap.png    # WNN UMAP轨迹 ⭐
+│   │   ├── trajectory_3d.png          # 3D轨迹（可选）
+│   │   └── trajectory_graph.png       # 轨迹图结构
+│   ├── Pseudotime/                    # 伪时间图
+│   │   ├── pseudotime_rna_umap.png
+│   │   ├── pseudotime_adt_umap.png
+│   │   ├── pseudotime_wnn_umap.png
+│   │   └── pseudotime_distribution.png
+│   ├── Genes/                         # 基因表达
+│   │   ├── trajectory_genes_heatmap.png
+│   │   ├── top_genes_modules.png
+│   │   └── markers_along_trajectory_*.png
+│   ├── Branches/                      # 分支分析
+│   │   ├── branch_points.png
+│   │   └── branch_genes_*.png
+│   └── QC/
+│       └── monocle3_qc_metrics.png
+└── Tables/
+    ├── pseudotime_by_cell.csv         # 每个细胞的伪时间
+    ├── trajectory_genes.csv           # 轨迹依赖基因
+    ├── branch_genes.csv               # 分支特异基因
+    └── gene_modules.csv               # 基因模块
+```
+
+## 技术特性
+
+### Monocle3 算法原理
+
+#### 步骤1：降维和聚类
+
+使用已有的UMAP降维结果。
+
+#### 步骤2：构建轨迹图（learn_graph）
+
+```
+细胞 ●●●●●●●●●●
+      ╲  ╲  ╲
+图结构  ━━━━━━●━━━━━━━
+              ╱
+           ●●●
+```
+
+基于UMAP坐标构建主图（principal graph）。
+
+#### 步骤3：排序细胞（order_cells）
+
+选择根节点（起点），计算每个细胞沿图的伪时间。
+
+```
+伪时间：0 ──→ 5 ──→ 10 ──→ 15 ──→ 20
+       Pre    Prolif   Early   Late   Mature
+```
+
+#### 步骤4：识别分支点
+
+检测轨迹图中的分支节点。
+
+```
+       ┌─── Lineage A (cDC1)
+起点 ──●
+       └─── Lineage B (cDC2)
+     分支点
+```
+
+### 三种UMAP空间选择
+
+| UMAP类型 | 适用场景 | 推荐度 |
+|---------|---------|-------|
+| **WNN UMAP** | 多模态整合分析 | ⭐⭐⭐ 最推荐 |
+| **RNA UMAP** | 基因表达驱动的轨迹 | ⭐⭐ 推荐 |
+| **ADT UMAP** | 蛋白标志物驱动 | ⭐ 可选 |
+
+**建议：** 优先使用 WNN UMAP，因为它整合了RNA和蛋白信息，最准确。
+
+## 使用说明
+
+### 准备工作
+
+#### 检查输入文件
+
+```{r check-input, eval=FALSE}
+# 检查Seurat对象是否存在
+mode <- "cDC1"  # 或 "cDC2", "integrated"
+input_file <- file.path("results", mode, "Robjects", "seurat_obj_annotated.rds")
+
+if (file.exists(input_file)) {
+  cat("✓ 输入文件存在:", input_file, "\n")
+} else {
+  cat("✗ 输入文件不存在，请先运行4.downstream_analysis.Rmd\n")
+}
+```
+
+### 运行分析
+
+在RStudio中：
+
+1. 打开 `5.monocle3_trajectory.Rmd`
+2. 设置下方的分析参数
+3. 点击 **Knit to HTML**
+4. 等待分析完成（约10-20分钟）
+
+### 参数设置
+
+```{r params, eval=FALSE}
+# =============================================================================
+# 用户参数设置
+# =============================================================================
+
+# 分析模式
+MODE <- "cDC1"  # 选项: "cDC1", "cDC2", "integrated"
+
+# 主要UMAP空间（用于轨迹推断）
+PRIMARY_UMAP <- "wnn"  # 选项: "rna", "adt", "wnn"
+
+# 细胞类型列
+CELL_TYPE_COL <- "author_annotation"  # 或 "Annotation_detailed"
+
+# 轨迹起点（留空则手动选择）
+START_CELL_TYPE <- NULL  # 或指定: "Pre-cDC1s"
+
+# 输出目录
+OUTPUT_DIR <- paste0("monocle3_analysis_", MODE)
+
+# Monocle3参数
+USE_PARTITION <- FALSE    # 是否使用分区
+MIN_BRANCH_LENGTH <- 10   # 最小分支长度
+PRUNE_GRAPH <- TRUE       # 是否修剪图
+
+# 差异分析参数
+N_TOP_GENES <- 50
+QVAL_THRESHOLD <- 0.05
+
+# 可视化参数
+POINT_SIZE <- 1.5
+ALPHA <- 0.8
+LABEL_CELL_GROUPS <- TRUE
+```
+
+---
+
+# 环境准备 {.tabset}
+
+## 加载R包
+
+```{r load-packages}
+# 核心包
+library(Seurat)
+library(monocle3)
+library(SingleCellExperiment)
+
+# 数据处理
+library(tidyverse)
+library(Matrix)
+
+# 可视化
+library(ggplot2)
+library(patchwork)
+library(RColorBrewer)
+library(viridis)
+library(pheatmap)
+library(ComplexHeatmap)
+
+# 其他
+library(scales)
+library(grDevices)
+
+cat("✓ 所有R包加载成功\n")
+cat("  Monocle3 版本:", as.character(packageVersion("monocle3")), "\n")
+```
+
+## 设置参数
+
+```{r set-parameters}
+# =============================================================================
+# 分析参数
+# =============================================================================
+
+# 分析模式
+MODE <- "cDC1"  # 可修改: "cDC1", "cDC2", "integrated"
+
+# 主要UMAP空间
+PRIMARY_UMAP <- "wnn"  # 可修改: "rna", "adt", "wnn"
+
+# 细胞类型列
+CELL_TYPE_COL <- "author_annotation"
+
+# 轨迹起点（NULL = 交互式选择）
+START_CELL_TYPE <- NULL  # 或 "Pre-cDC1s"
+
+# 输出目录
+OUTPUT_DIR <- paste0("monocle3_analysis_", MODE)
+
+# Monocle3参数
+USE_PARTITION <- FALSE        # 分区
+MIN_BRANCH_LENGTH <- 10       # 最小分支长度
+PRUNE_GRAPH <- TRUE           # 修剪图
+NUM_ITER <- 2                 # learn_graph迭代次数
+
+# 差异分析参数
+N_TOP_GENES <- 50
+QVAL_THRESHOLD <- 0.05
+NEIGHBOR_GRAPH <- "principal_graph"  # 或 "knn"
+
+# QC参数
+MIN_GENES <- 200
+MAX_GENES <- 5000
+MIN_UMI <- 500
+
+# 可视化参数
+POINT_SIZE <- 1.5
+ALPHA <- 0.8
+LABEL_CELL_GROUPS <- TRUE
+LABEL_LEAVES <- TRUE
+LABEL_ROOTS <- TRUE
+LABEL_BRANCH_POINTS <- TRUE
+
+cat("✓ 参数设置完成\n")
+cat("  模式:", MODE, "\n")
+cat("  主要UMAP:", PRIMARY_UMAP, "\n")
+cat("  细胞类型列:", CELL_TYPE_COL, "\n")
+```
+
+## 创建输出目录
+
+```{r create-dirs}
+# 创建输出目录结构
+dirs <- list(
+  base = OUTPUT_DIR,
+  data = file.path(OUTPUT_DIR, "data"),
+  robjects = file.path(OUTPUT_DIR, "Robjects"),
+  plots = file.path(OUTPUT_DIR, "Plots"),
+  trajectory = file.path(OUTPUT_DIR, "Plots", "Trajectory"),
+  pseudotime = file.path(OUTPUT_DIR, "Plots", "Pseudotime"),
+  genes = file.path(OUTPUT_DIR, "Plots", "Genes"),
+  branches = file.path(OUTPUT_DIR, "Plots", "Branches"),
+  qc = file.path(OUTPUT_DIR, "Plots", "QC"),
+  tables = file.path(OUTPUT_DIR, "Tables")
+)
+
+# 创建所有目录
+for (dir_path in dirs) {
+  dir.create(dir_path, recursive = TRUE, showWarnings = FALSE)
+}
+
+cat("✓ 输出目录创建成功:", OUTPUT_DIR, "\n")
+```
+
+---
+
+# 数据加载 {.tabset}
+
+## 加载Seurat对象
+
+```{r load-seurat}
+cat(rep("=", 80), "\n", sep="")
+cat("加载Seurat对象\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 输入文件路径
+input_file <- file.path("results", MODE, "Robjects", "seurat_obj_annotated.rds")
+
+if (!file.exists(input_file)) {
+  stop("错误：输入文件不存在 - ", input_file,
+       "\n请先运行 4.downstream_analysis.Rmd")
+}
+
+# 加载Seurat对象
+cat("正在加载:", input_file, "\n")
+seurat_obj <- readRDS(input_file)
+
+cat("✓ 加载成功\n")
+cat("  细胞数:", ncol(seurat_obj), "\n")
+cat("  基因数:", nrow(seurat_obj), "\n")
+
+# 显示可用的降维
+reductions <- names(seurat_obj@reductions)
+cat("  可用降维:", paste(reductions, collapse=", "), "\n")
+
+# 显示可用的注释列
+metadata_cols <- colnames(seurat_obj@meta.data)
+annotation_cols <- metadata_cols[grepl("annotation|cluster", metadata_cols, ignore.case=TRUE)]
+cat("  注释列:", paste(annotation_cols, collapse=", "), "\n")
+```
+
+## 数据质控
+
+```{r qc-data}
+cat("\n数据质控\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 保存QC前的细胞数
+n_cells_before <- ncol(seurat_obj)
+
+# 基础QC
+seurat_obj <- subset(seurat_obj,
+                     subset = nFeature_RNA > MIN_GENES &
+                             nFeature_RNA < MAX_GENES &
+                             nCount_RNA > MIN_UMI)
+
+n_cells_after <- ncol(seurat_obj)
+n_removed <- n_cells_before - n_cells_after
+
+cat("QC过滤:\n")
+cat("  过滤前:", n_cells_before, "细胞\n")
+cat("  过滤后:", n_cells_after, "细胞\n")
+cat("  移除:", n_removed, "细胞 (",
+    round(n_removed/n_cells_before*100, 2), "%)\n")
+
+# 检查细胞类型分布
+if (CELL_TYPE_COL %in% colnames(seurat_obj@meta.data)) {
+  cat("\n细胞类型分布:\n")
+  cell_counts <- table(seurat_obj@meta.data[[CELL_TYPE_COL]])
+  print(cell_counts)
+} else {
+  stop("错误：未找到细胞类型列 '", CELL_TYPE_COL, "'")
+}
+
+cat("\n✓ 数据质控完成\n")
+```
+
+## 转换为CDS对象
+
+```{r convert-to-cds}
+cat("\n转换为Monocle3 CDS对象\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 提取表达矩阵
+expression_matrix <- GetAssayData(seurat_obj, slot = "counts", assay = "RNA")
+
+# 提取细胞元数据
+cell_metadata <- seurat_obj@meta.data
+
+# 提取基因元数据
+gene_metadata <- data.frame(
+  gene_short_name = rownames(expression_matrix),
+  row.names = rownames(expression_matrix)
+)
+
+# 创建CDS对象
+cds <- new_cell_data_set(
+  expression_data = expression_matrix,
+  cell_metadata = cell_metadata,
+  gene_metadata = gene_metadata
+)
+
+cat("✓ CDS对象创建成功\n")
+cat("  细胞数:", ncol(cds), "\n")
+cat("  基因数:", nrow(cds), "\n")
+
+# 添加细胞类型
+cds$cell_type <- seurat_obj@meta.data[[CELL_TYPE_COL]]
+cds$cell_type <- factor(cds$cell_type)
+
+cat("  细胞类型数:", length(levels(cds$cell_type)), "\n")
+```
+
+## 添加降维结果
+
+```{r add-reductions}
+cat("\n添加Seurat降维结果到CDS\n")
+cat(rep("=", 80), "\n", sep="")
+
+# UMAP名称映射
+umap_mapping <- list(
+  rna = "umap",
+  adt = "adt_umap",
+  wnn = "wnn_umap"
+)
+
+# 添加所有可用的UMAP
+for (umap_type in c("rna", "adt", "wnn")) {
+  reduction_name <- umap_mapping[[umap_type]]
+
+  if (reduction_name %in% names(seurat_obj@reductions)) {
+    # 提取UMAP坐标
+    umap_coords <- Embeddings(seurat_obj, reduction = reduction_name)
+
+    # 添加到CDS
+    reducedDim(cds, paste0(toupper(umap_type), "_UMAP")) <- umap_coords
+
+    cat("  ✓ 添加", toupper(umap_type), "UMAP\n")
+  } else {
+    cat("  ✗", toupper(umap_type), "UMAP 不存在\n")
+  }
+}
+
+# 添加PCA（如果存在）
+if ("pca" %in% names(seurat_obj@reductions)) {
+  pca_coords <- Embeddings(seurat_obj, reduction = "pca")
+  reducedDim(cds, "PCA") <- pca_coords
+  cat("  ✓ 添加PCA\n")
+}
+
+# 检查可用降维
+cat("\n可用降维:", paste(reducedDimNames(cds), collapse=", "), "\n")
+```
+
+---
+
+# Monocle3 轨迹分析 {.tabset}
+
+## 预处理（可选）
+
+```{r preprocess-cds}
+cat("\nMonocle3 预处理\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 如果需要重新计算降维，取消下面的注释
+# 由于我们已经有Seurat的UMAP，通常跳过这一步
+
+# # 预处理
+# cds <- preprocess_cds(cds, num_dim = 50, norm_method = "log")
+#
+# # 降维
+# cds <- reduce_dimension(cds, reduction_method = "UMAP")
+#
+# # 聚类（如果需要）
+# cds <- cluster_cells(cds, resolution = 1e-3)
+
+cat("✓ 使用Seurat的降维结果，跳过预处理\n")
+```
+
+## 学习轨迹图
+
+```{r learn-graph}
+cat("\n学习轨迹图\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 选择主要UMAP空间
+umap_name <- paste0(toupper(PRIMARY_UMAP), "_UMAP")
+
+if (!umap_name %in% reducedDimNames(cds)) {
+  cat("⚠ 警告:", umap_name, "不存在\n")
+
+  # 尝试替代方案
+  available_umaps <- reducedDimNames(cds)
+  if ("WNN_UMAP" %in% available_umaps) {
+    umap_name <- "WNN_UMAP"
+  } else if ("RNA_UMAP" %in% available_umaps) {
+    umap_name <- "RNA_UMAP"
+  } else if ("UMAP" %in% available_umaps) {
+    umap_name <- "UMAP"
+  } else {
+    stop("错误：未找到任何UMAP降维")
+  }
+
+  cat("  使用替代方案:", umap_name, "\n")
+}
+
+cat("使用降维:", umap_name, "\n")
+
+# 如果使用分区
+if (USE_PARTITION) {
+  cat("进行细胞聚类和分区...\n")
+  cds <- cluster_cells(cds, reduction_method = umap_name)
+
+  cat("学习图结构（使用分区）...\n")
+  cds <- learn_graph(cds,
+                     use_partition = TRUE,
+                     close_loop = FALSE,
+                     learn_graph_control = list(
+                       minimal_branch_len = MIN_BRANCH_LENGTH,
+                       prune_graph = PRUNE_GRAPH,
+                       num_iter = NUM_ITER
+                     ))
+} else {
+  cat("学习图结构（不使用分区）...\n")
+  cds <- learn_graph(cds,
+                     use_partition = FALSE,
+                     close_loop = FALSE,
+                     learn_graph_control = list(
+                       minimal_branch_len = MIN_BRANCH_LENGTH,
+                       prune_graph = PRUNE_GRAPH,
+                       num_iter = NUM_ITER
+                     ))
+}
+
+cat("✓ 轨迹图学习完成\n")
+```
+
+## 排序细胞（计算伪时间）
+
+```{r order-cells}
+cat("\n排序细胞并计算伪时间\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 确定起点细胞类型
+if (is.null(START_CELL_TYPE)) {
+  # 自动检测起点
+  potential_starts <- c("Pre-cDC1s", "Pre-cDC2s", "pre-cDC1", "pre-cDC2",
+                       "Progenitor", "progenitor", "Early")
+
+  found_starts <- potential_starts[potential_starts %in% levels(cds$cell_type)]
+
+  if (length(found_starts) > 0) {
+    START_CELL_TYPE <- found_starts[1]
+    cat("✓ 自动检测起点:", START_CELL_TYPE, "\n")
+  } else {
+    cat("⚠ 未找到典型起点细胞类型\n")
+    cat("可用细胞类型:", paste(levels(cds$cell_type), collapse=", "), "\n")
+
+    # 使用第一个细胞类型
+    START_CELL_TYPE <- levels(cds$cell_type)[1]
+    cat("使用默认起点:", START_CELL_TYPE, "\n")
+  }
+} else {
+  cat("✓ 使用指定起点:", START_CELL_TYPE, "\n")
+}
+
+# 获取起点细胞
+start_cells <- which(cds$cell_type == START_CELL_TYPE)
+
+if (length(start_cells) == 0) {
+  stop("错误：未找到起点细胞类型 '", START_CELL_TYPE, "'")
+}
+
+cat("起点细胞数:", length(start_cells), "\n")
+
+# 排序细胞
+cat("正在计算伪时间...\n")
+
+# 使用起点细胞的质心作为根节点
+cds <- order_cells(cds, root_cells = start_cells)
+
+# 检查伪时间
+if ("pseudotime" %in% colnames(colData(cds))) {
+  cat("✓ 伪时间计算完成\n")
+  cat("  伪时间范围:", round(range(cds$pseudotime, na.rm=TRUE), 3), "\n")
+  cat("  NA值数量:", sum(is.na(cds$pseudotime)), "\n")
+} else {
+  warning("警告：伪时间未计算成功")
+}
+```
+
+---
+
+# 结果可视化 {.tabset}
+
+## 轨迹图（所有UMAP空间）
+
+```{r plot-trajectories-all-umaps, fig.width=14, fig.height=12}
+cat("\n绘制所有UMAP空间的轨迹图\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 定义所有UMAP空间
+all_umaps <- list(
+  list(name = "RNA_UMAP", label = "RNA UMAP", suffix = "rna_umap"),
+  list(name = "ADT_UMAP", label = "ADT UMAP", suffix = "adt_umap"),
+  list(name = "WNN_UMAP", label = "WNN UMAP", suffix = "wnn_umap")
+)
+
+# 为每个UMAP空间绘图
+for (umap_info in all_umaps) {
+  umap_name <- umap_info$name
+
+  # 检查是否存在
+  if (!umap_name %in% reducedDimNames(cds)) {
+    cat("  跳过:", umap_name, "(不存在)\n")
+    next
+  }
+
+  cat("  绘制:", umap_info$label, "\n")
+
+  # 绘制轨迹图
+  p <- plot_cells(
+    cds,
+    reduction_method = umap_name,
+    color_cells_by = "cell_type",
+    label_cell_groups = LABEL_CELL_GROUPS,
+    label_leaves = LABEL_LEAVES,
+    label_branch_points = LABEL_BRANCH_POINTS,
+    label_roots = LABEL_ROOTS,
+    graph_label_size = 3,
+    cell_size = POINT_SIZE,
+    alpha = ALPHA
+  ) +
+    labs(
+      title = paste0(MODE, " Development Trajectory - ", umap_info$label),
+      subtitle = "Monocle3 trajectory inference with principal graph"
+    ) +
+    theme(
+      plot.title = element_text(face = "bold", size = 16),
+      plot.subtitle = element_text(size = 12, color = "gray40"),
+      legend.position = "right"
+    )
+
+  # 保存图片
+  output_file <- file.path(dirs$trajectory,
+                          paste0("trajectory_", umap_info$suffix, ".png"))
+  ggsave(output_file, plot = p, width = 14, height = 12, dpi = 300)
+  cat("    保存:", output_file, "\n")
+
+  # 显示图片
+  print(p)
+}
+```
+
+## 伪时间图（所有UMAP空间）
+
+```{r plot-pseudotime-all-umaps, fig.width=14, fig.height=12}
+cat("\n绘制所有UMAP空间的伪时间图\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 为每个UMAP空间绘制伪时间
+for (umap_info in all_umaps) {
+  umap_name <- umap_info$name
+
+  if (!umap_name %in% reducedDimNames(cds)) {
+    next
+  }
+
+  cat("  绘制:", umap_info$label, "\n")
+
+  # 绘制伪时间图
+  p <- plot_cells(
+    cds,
+    reduction_method = umap_name,
+    color_cells_by = "pseudotime",
+    label_cell_groups = FALSE,
+    label_leaves = FALSE,
+    label_branch_points = FALSE,
+    label_roots = FALSE,
+    cell_size = POINT_SIZE,
+    alpha = ALPHA
+  ) +
+    scale_color_viridis(option = "magma", name = "Pseudotime") +
+    labs(
+      title = paste0(MODE, " Pseudotime - ", umap_info$label),
+      subtitle = "Developmental progression along trajectory"
+    ) +
+    theme(
+      plot.title = element_text(face = "bold", size = 16),
+      plot.subtitle = element_text(size = 12, color = "gray40"),
+      legend.position = "right"
+    )
+
+  # 保存图片
+  output_file <- file.path(dirs$pseudotime,
+                          paste0("pseudotime_", umap_info$suffix, ".png"))
+  ggsave(output_file, plot = p, width = 14, height = 12, dpi = 300)
+  cat("    保存:", output_file, "\n")
+
+  # 显示图片
+  print(p)
+}
+```
+
+## 伪时间分布
+
+```{r plot-pseudotime-distribution, fig.width=14, fig.height=6}
+cat("\n绘制伪时间分布图\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 准备数据
+pt_df <- data.frame(
+  cell_type = cds$cell_type,
+  pseudotime = cds$pseudotime
+)
+
+# 去除NA
+pt_df <- pt_df[!is.na(pt_df$pseudotime), ]
+
+# 小提琴图
+p1 <- ggplot(pt_df, aes(x = cell_type, y = pseudotime)) +
+  geom_violin(aes(fill = cell_type), alpha = 0.7, scale = "width") +
+  geom_boxplot(width = 0.2, alpha = 0.5, outlier.shape = NA) +
+  scale_fill_brewer(palette = "Set2") +
+  labs(
+    title = paste0(MODE, " Pseudotime Distribution by Cell Type"),
+    x = "Cell Type",
+    y = "Monocle3 Pseudotime"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none",
+    plot.title = element_text(face = "bold")
+  )
+
+# 直方图
+p2 <- ggplot(pt_df, aes(x = pseudotime)) +
+  geom_histogram(aes(fill = cell_type), bins = 50, alpha = 0.7) +
+  scale_fill_brewer(palette = "Set2", name = "Cell Type") +
+  labs(
+    title = "Pseudotime Distribution",
+    x = "Monocle3 Pseudotime",
+    y = "Number of Cells"
+  ) +
+  theme_classic(base_size = 12) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
+
+# 组合图
+p_combined <- p1 + p2 + plot_layout(widths = c(2, 1))
+
+# 保存
+output_file <- file.path(dirs$pseudotime, "pseudotime_distribution.png")
+ggsave(output_file, plot = p_combined, width = 16, height = 6, dpi = 300)
+cat("  保存:", output_file, "\n")
+
+# 显示
+print(p_combined)
+```
+
+## 标志基因沿轨迹表达
+
+```{r plot-marker-genes, fig.width=14, fig.height=10}
+cat("\n绘制标志基因沿轨迹的表达\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 定义cDC标志基因
+marker_genes <- c(
+  # 增殖
+  "Mki67", "Top2a", "Pcna",
+  # cDC1
+  "Xcr1", "Clec9a", "Batf3", "Irf8",
+  # cDC2
+  "Sirpa", "Cd172a", "Irf4", "Klf4",
+  # 成熟
+  "Cd80", "Cd86", "H2-Aa", "H2-Ab1",
+  # 迁移
+  "Ccr7", "Fscn1", "Cd40",
+  # 功能
+  "Il12b", "Cxcl9", "Il10"
+)
+
+# 检查哪些基因存在
+available_markers <- marker_genes[marker_genes %in% rownames(cds)]
+
+cat("  可用标志基因:", length(available_markers), "/", length(marker_genes), "\n")
+
+if (length(available_markers) > 0) {
+  # 选择前12个基因绘图
+  genes_to_plot <- available_markers[1:min(12, length(available_markers))]
+
+  # 绘制基因表达沿伪时间变化
+  p <- plot_genes_in_pseudotime(
+    cds[genes_to_plot, ],
+    color_cells_by = "cell_type",
+    min_expr = 0.5,
+    ncol = 3
+  ) +
+    theme(
+      strip.text = element_text(face = "bold", size = 10)
+    )
+
+  # 保存
+  output_file <- file.path(dirs$genes, "markers_along_trajectory.png")
+  ggsave(output_file, plot = p, width = 14, height = 10, dpi = 300)
+  cat("  保存:", output_file, "\n")
+
+  # 显示
+  print(p)
+} else {
+  cat("  ⚠ 未找到标志基因，跳过绘图\n")
+}
+```
+
+---
+
+# 差异分析 {.tabset}
+
+## 轨迹依赖基因识别
+
+```{r identify-trajectory-genes}
+cat("\n识别轨迹依赖基因\n")
+cat(rep("=", 80), "\n", sep="")
+
+cat("使用 graph_test() 识别轨迹相关基因...\n")
+cat("  这可能需要几分钟时间...\n\n")
+
+# 运行graph_test
+# 注意：这会比较慢
+trajectory_genes <- graph_test(
+  cds,
+  neighbor_graph = NEIGHBOR_GRAPH,
+  cores = 1  # 可以增加到多核
+)
+
+# 过滤显著基因
+sig_genes <- trajectory_genes %>%
+  filter(q_value < QVAL_THRESHOLD) %>%
+  arrange(q_value)
+
+cat("✓ 差异分析完成\n")
+cat("  测试基因数:", nrow(trajectory_genes), "\n")
+cat("  显著基因数:", nrow(sig_genes), "\n")
+
+# 显示top基因
+if (nrow(sig_genes) > 0) {
+  cat("\nTop 20 轨迹依赖基因:\n")
+  print(head(sig_genes[, c("gene_short_name", "morans_I", "q_value")], 20))
+
+  # 保存完整结果
+  output_file <- file.path(dirs$tables, "trajectory_genes.csv")
+  write.csv(trajectory_genes, output_file, row.names = FALSE)
+  cat("\n✓ 保存轨迹基因:", output_file, "\n")
+} else {
+  cat("\n⚠ 未找到显著轨迹基因\n")
+}
+```
+
+## 基因模块识别
+
+```{r identify-gene-modules, fig.width=12, fig.height=10}
+cat("\n识别基因模块\n")
+cat(rep("=", 80), "\n", sep="")
+
+if (exists("sig_genes") && nrow(sig_genes) >= 20) {
+  cat("识别共表达模块...\n")
+
+  # 选择top基因
+  top_genes <- sig_genes %>%
+    top_n(min(100, nrow(sig_genes)), wt = -q_value) %>%
+    pull(gene_short_name)
+
+  # 计算基因模块
+  gene_modules <- find_gene_modules(
+    cds[top_genes, ],
+    resolution = 1e-2,
+    cores = 1
+  )
+
+  # 统计模块
+  module_table <- table(gene_modules$module)
+  cat("  识别到", length(module_table), "个模块\n")
+  cat("  模块大小分布:\n")
+  print(module_table)
+
+  # 绘制模块热图
+  if (nrow(gene_modules) > 0) {
+    # 提取模块基因的表达
+    module_genes <- gene_modules$id
+
+    p <- plot_cells(
+      cds,
+      genes = gene_modules,
+      show_trajectory_graph = FALSE,
+      label_cell_groups = FALSE
+    )
+
+    # 保存
+    output_file <- file.path(dirs$genes, "gene_modules.png")
+    ggsave(output_file, plot = p, width = 12, height = 10, dpi = 300)
+    cat("  保存模块图:", output_file, "\n")
+
+    # 保存模块信息
+    output_file <- file.path(dirs$tables, "gene_modules.csv")
+    write.csv(gene_modules, output_file, row.names = FALSE)
+    cat("  保存模块表格:", output_file, "\n")
+  }
+} else {
+  cat("  ⚠ 显著基因太少，跳过模块分析\n")
+}
+```
+
+## 轨迹基因热图
+
+```{r plot-trajectory-heatmap, fig.width=10, fig.height=14}
+cat("\n绘制轨迹基因热图\n")
+cat(rep("=", 80), "\n", sep="")
+
+if (exists("sig_genes") && nrow(sig_genes) > 0) {
+  # 选择top基因
+  top_genes <- sig_genes %>%
+    top_n(min(N_TOP_GENES, nrow(sig_genes)), wt = -q_value) %>%
+    pull(gene_short_name)
+
+  cat("  绘制", length(top_genes), "个基因\n")
+
+  # 提取归一化表达
+  expr_mat <- normalized_counts(cds)[top_genes, , drop = FALSE]
+
+  # 按伪时间排序细胞
+  cell_order <- order(cds$pseudotime, na.last = NA)
+  expr_mat <- expr_mat[, cell_order, drop = FALSE]
+
+  # 按基因Moran's I排序
+  gene_order_df <- sig_genes %>%
+    filter(gene_short_name %in% top_genes) %>%
+    arrange(desc(morans_I))
+
+  expr_mat <- expr_mat[gene_order_df$gene_short_name, , drop = FALSE]
+
+  # Z-score标准化
+  expr_scaled <- t(scale(t(as.matrix(expr_mat))))
+
+  # 准备注释
+  cell_annotation <- data.frame(
+    cell_type = cds$cell_type[cell_order],
+    pseudotime = cds$pseudotime[cell_order]
+  )
+  rownames(cell_annotation) <- colnames(expr_scaled)
+
+  # 绘制热图
+  output_file <- file.path(dirs$genes, "trajectory_genes_heatmap.png")
+
+  png(output_file, width = 10, height = 14, units = "in", res = 300)
+
+  pheatmap(
+    expr_scaled,
+    cluster_rows = FALSE,
+    cluster_cols = FALSE,
+    show_colnames = FALSE,
+    show_rownames = TRUE,
+    annotation_col = cell_annotation,
+    color = colorRampPalette(c("blue", "white", "red"))(100),
+    breaks = seq(-2, 2, length.out = 101),
+    main = paste0(MODE, " - Trajectory-dependent Genes (Monocle3)"),
+    fontsize_row = 7,
+    annotation_colors = list(
+      cell_type = setNames(brewer.pal(min(length(unique(cell_annotation$cell_type)), 8), "Set2"),
+                          unique(cell_annotation$cell_type))
+    )
+  )
+
+  dev.off()
+
+  cat("  保存:", output_file, "\n")
+} else {
+  cat("  ⚠ 未找到显著轨迹基因，跳过热图\n")
+}
+```
+
+---
+
+# 结果导出 {.tabset}
+
+## 保存CDS对象
+
+```{r save-cds}
+cat("\n保存Monocle3 CDS对象\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 保存CDS对象
+output_file <- file.path(dirs$data, "cds_object.rds")
+saveRDS(cds, output_file)
+cat("✓ 保存CDS对象:", output_file, "\n")
+```
+
+## 保存Seurat对象
+
+```{r save-seurat}
+cat("\n保存添加伪时间的Seurat对象\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 将伪时间添加回Seurat对象
+seurat_obj$monocle3_pseudotime <- cds$pseudotime
+
+output_file <- file.path(dirs$robjects, "seurat_with_pseudotime.rds")
+saveRDS(seurat_obj, output_file)
+cat("✓ 保存Seurat对象:", output_file, "\n")
+```
+
+## 导出CSV表格
+
+```{r export-tables}
+cat("\n导出CSV表格\n")
+cat(rep("=", 80), "\n", sep="")
+
+# 1. 伪时间表格
+pseudotime_df <- data.frame(
+  cell_id = colnames(cds),
+  cell_type = cds$cell_type,
+  pseudotime = cds$pseudotime
+)
+
+output_file <- file.path(dirs$tables, "pseudotime_by_cell.csv")
+write.csv(pseudotime_df, output_file, row.names = FALSE)
+cat("✓ 导出伪时间表格:", output_file, "\n")
+cat("  行数:", nrow(pseudotime_df), "\n")
+
+# 2. 轨迹基因（如果已计算）
+if (exists("trajectory_genes")) {
+  output_file <- file.path(dirs$tables, "trajectory_genes_all.csv")
+  write.csv(trajectory_genes, output_file, row.names = FALSE)
+  cat("✓ 导出所有轨迹基因:", output_file, "\n")
+  cat("  基因数:", nrow(trajectory_genes), "\n")
+}
+
+# 3. 显著基因
+if (exists("sig_genes") && nrow(sig_genes) > 0) {
+  output_file <- file.path(dirs$tables, "trajectory_genes_significant.csv")
+  write.csv(sig_genes, output_file, row.names = FALSE)
+  cat("✓ 导出显著基因:", output_file, "\n")
+  cat("  基因数:", nrow(sig_genes), "\n")
+}
+
+cat("\n✓ 所有表格导出完成\n")
+```
+
+## 生成分析总结
+
+```{r summary}
+cat("\n", rep("=", 80), "\n", sep="")
+cat("MONOCLE3 分析总结\n")
+cat(rep("=", 80), "\n\n", sep="")
+
+cat("分析参数:\n")
+cat("  模式:", MODE, "\n")
+cat("  主要UMAP:", PRIMARY_UMAP, "\n")
+cat("  细胞类型列:", CELL_TYPE_COL, "\n")
+cat("  起点细胞:", START_CELL_TYPE, "\n")
+cat("  使用分区:", USE_PARTITION, "\n")
+cat("  最小分支长度:", MIN_BRANCH_LENGTH, "\n\n")
+
+cat("数据统计:\n")
+cat("  细胞数:", ncol(cds), "\n")
+cat("  基因数:", nrow(cds), "\n")
+cat("  细胞类型数:", length(unique(cds$cell_type)), "\n\n")
+
+cat("轨迹结果:\n")
+if ("pseudotime" %in% colnames(colData(cds))) {
+  cat("  伪时间范围:", round(range(cds$pseudotime, na.rm=TRUE), 3), "\n")
+  cat("  NA值数量:", sum(is.na(cds$pseudotime)), "\n")
+} else {
+  cat("  ⚠ 伪时间未计算\n")
+}
+cat("\n")
+
+if (exists("sig_genes")) {
+  cat("差异分析:\n")
+  cat("  测试基因数:", nrow(trajectory_genes), "\n")
+  cat("  显著基因数:", nrow(sig_genes), "\n")
+  if (exists("gene_modules")) {
+    cat("  基因模块数:", length(unique(gene_modules$module)), "\n")
+  }
+  cat("\n")
+}
+
+cat("输出文件:\n")
+cat("  输出目录:", OUTPUT_DIR, "\n")
+cat("  轨迹图:", length(list.files(dirs$trajectory)), "个\n")
+cat("  伪时间图:", length(list.files(dirs$pseudotime)), "个\n")
+cat("  基因图:", length(list.files(dirs$genes)), "个\n")
+cat("  CSV表格:", length(list.files(dirs$tables)), "个\n\n")
+
+cat(rep("=", 80), "\n", sep="")
+cat("分析完成！\n")
+cat(rep("=", 80), "\n", sep="")
+```
+
+---
+
+# Session Info
+
+```{r session-info}
+sessionInfo()
+```
