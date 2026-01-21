@@ -543,17 +543,20 @@ if (!umap_name %in% reducedDimNames(cds)) {
 
 cat("使用降维:", umap_name, "\n")
 
-# 如果使用分区
-if (USE_PARTITION) {
-  cat("进行细胞聚类和分区...\n")
-  cds <- cluster_cells(cds, reduction_method = umap_name)
+# 运行聚类（learn_graph 需要）
+cat("\n进行细胞聚类...\n")
+cds <- cluster_cells(cds, reduction_method = umap_name)
 
-  cat("学习图结构（使用分区）...\n")
+cat("  检测到", length(unique(cds@clusters[[umap_name]]$clusters)), "个聚类\n")
+
+# 学习轨迹图
+if (USE_PARTITION) {
+  cat("\n学习图结构（使用分区）...\n")
   cds <- learn_graph(cds,
                      use_partition = TRUE,
                      close_loop = FALSE)
 } else {
-  cat("学习图结构（不使用分区）...\n")
+  cat("\n学习图结构（不使用分区）...\n")
   cds <- learn_graph(cds,
                      use_partition = FALSE,
                      close_loop = FALSE)
