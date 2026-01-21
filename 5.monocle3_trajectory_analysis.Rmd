@@ -851,26 +851,33 @@ if (length(early_cells) > 0) {
 
     # ⭐ 备用方案：基于 UMAP 坐标选择根节点
     cat("尝试备用方案：基于 UMAP 坐标选择根节点...\n")
-    cat("  根据作者论文，轨迹起点在 UMAP 左侧区域\n\n")
+    cat("  根据作者论文，轨迹起点在 UMAP 右侧区域\n\n")
 
     # 获取 UMAP 坐标
     umap_coords <- reducedDims(cds)[["UMAP"]]
 
-    # 选择左侧的细胞作为候选根节点（UMAP_1 < -8）
-    left_cells <- which(umap_coords[, 1] < -8)
+    # 找到UMAP_1的分布，使用75分位数作为阈值
+    umap1_range <- range(umap_coords[, 1])
+    umap1_75percentile <- quantile(umap_coords[, 1], 0.75)
 
-    if (length(left_cells) > 0) {
-      # 从左侧细胞中选择最左侧的100个细胞作为根节点
-      left_x_coords <- umap_coords[left_cells, 1]
-      most_left_indices <- order(left_x_coords)[1:min(100, length(left_cells))]
-      root_cell_indices <- left_cells[most_left_indices]
+    cat("  UMAP_1 范围:", round(umap1_range[1], 2), "到", round(umap1_range[2], 2), "\n")
+    cat("  使用75分位数作为阈值:", round(umap1_75percentile, 2), "\n\n")
 
-      cat("  找到", length(left_cells), "个左侧细胞\n")
-      cat("  选择最左侧的", length(root_cell_indices), "个细胞作为根节点\n\n")
+    # 选择右侧的细胞作为候选根节点（UMAP_1 > 75分位数）
+    right_cells <- which(umap_coords[, 1] > umap1_75percentile)
+
+    if (length(right_cells) > 0) {
+      # 从右侧细胞中选择最右侧的100个细胞作为根节点
+      right_x_coords <- umap_coords[right_cells, 1]
+      most_right_indices <- order(right_x_coords, decreasing = TRUE)[1:min(100, length(right_cells))]
+      root_cell_indices <- right_cells[most_right_indices]
+
+      cat("  找到", length(right_cells), "个右侧细胞\n")
+      cat("  选择最右侧的", length(root_cell_indices), "个细胞作为根节点\n\n")
 
       cds <- order_cells(cds, root_cells = colnames(cds)[root_cell_indices])
       cat("✓ 伪时间计算完成（基于 UMAP 坐标的根节点）\n")
-      cat("  提示：请检查伪时间图，确认方向正确（左侧应为低伪时间）\n\n")
+      cat("  提示：请检查伪时间图，确认方向正确（右侧应为低伪时间）\n\n")
 
     } else {
       stop("无法找到合适的根节点细胞。请在交互式环境中运行或修正细胞类型名称。")
