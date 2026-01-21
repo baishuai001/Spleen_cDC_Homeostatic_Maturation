@@ -225,6 +225,9 @@ OUTPUT_DIR <- paste0("monocle3_analysis_", MODE)
 
 # Monocle3参数
 USE_PARTITION <- FALSE    # 是否使用分区（推荐FALSE）
+CLUSTER_RESOLUTION <- NULL  # 聚类分辨率（NULL=自动，1e-3至1e-6=更细致）
+                            # 更小的值 = 更多聚类 = 图更细致地覆盖数据
+                            # 如果图没有覆盖所有区域，尝试 1e-4 或 1e-5
 
 # 差异分析参数
 N_TOP_GENES <- 50
@@ -295,6 +298,7 @@ OUTPUT_DIR <- paste0("monocle3_analysis_", MODE)
 
 # Monocle3参数
 USE_PARTITION <- FALSE        # 是否使用分区（推荐FALSE）
+CLUSTER_RESOLUTION <- NULL    # 聚类分辨率（NULL=自动，1e-4至1e-5=更细致）
 
 # 差异分析参数
 N_TOP_GENES <- 50
@@ -580,9 +584,22 @@ cat("  ✓ 已将", umap_name, "设置为 UMAP\n")
 
 # 运行聚类（learn_graph 需要）
 cat("\n进行细胞聚类...\n")
-cds <- cluster_cells(cds, reduction_method = "UMAP")
+if (!is.null(CLUSTER_RESOLUTION)) {
+  cat("  使用自定义分辨率:", CLUSTER_RESOLUTION, "\n")
+  cds <- cluster_cells(cds, reduction_method = "UMAP", resolution = CLUSTER_RESOLUTION)
+} else {
+  cat("  使用默认分辨率\n")
+  cds <- cluster_cells(cds, reduction_method = "UMAP")
+}
 
-cat("  检测到", length(unique(cds@clusters$UMAP$clusters)), "个聚类\n")
+n_clusters <- length(unique(cds@clusters$UMAP$clusters))
+cat("  检测到", n_clusters, "个聚类\n")
+
+# 如果聚类数太少，可能导致图覆盖不足
+if (n_clusters < 5) {
+  cat("  ⚠ 警告：聚类数较少，图可能无法细致覆盖所有区域\n")
+  cat("    建议：尝试设置 CLUSTER_RESOLUTION = 1e-4 或更小的值\n")
+}
 
 # 学习轨迹图
 if (USE_PARTITION) {
@@ -666,15 +683,34 @@ if ("pseudotime" %in% colnames(colData(cds))) {
                           by = list(cell_type = colData(cds)$cell_type),
                           FUN = function(x) c(mean = mean(x, na.rm=TRUE),
                                              median = median(x, na.rm=TRUE),
+                                             min = min(x, na.rm=TRUE),
                                              max = max(x, na.rm=TRUE)))
   pt_summary <- data.frame(
     cell_type = pt_by_type$cell_type,
     mean_pt = round(pt_by_type$x[, "mean"], 2),
     median_pt = round(pt_by_type$x[, "median"], 2),
+    min_pt = round(pt_by_type$x[, "min"], 2),
     max_pt = round(pt_by_type$x[, "max"], 2)
   )
   pt_summary <- pt_summary[order(pt_summary$mean_pt), ]
   print(pt_summary)
+
+  # 检查起点细胞类型的伪时间分布
+  if (!is.null(START_CELL_TYPE) && START_CELL_TYPE %in% colData(cds)$cell_type) {
+    cat("\n起点细胞类型 (", START_CELL_TYPE, ") 的伪时间分布:\n", sep="")
+    start_pt <- pseudotime(cds)[colData(cds)$cell_type == START_CELL_TYPE]
+    cat("  最小值:", round(min(start_pt, na.rm=TRUE), 3), "\n")
+    cat("  平均值:", round(mean(start_pt, na.rm=TRUE), 3), "\n")
+    cat("  最大值:", round(max(start_pt, na.rm=TRUE), 3), "\n")
+    cat("  标准差:", round(sd(start_pt, na.rm=TRUE), 3), "\n")
+
+    # 如果起点细胞的 pseudotime 标准差很大，说明图没有很好地覆盖
+    if (sd(start_pt, na.rm=TRUE) > 1.0) {
+      cat("  ⚠ 警告：起点细胞的 pseudotime 标准差较大\n")
+      cat("    这可能表示轨迹图没有完全覆盖起点细胞团块\n")
+      cat("    建议：尝试调整聚类分辨率或检查 UMAP 质量\n")
+    }
+  }
 
 } else {
   warning("警告：伪时间未计算成功")
