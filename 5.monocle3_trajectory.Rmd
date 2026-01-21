@@ -654,10 +654,20 @@ for (umap_info in all_umaps) {
 
   cat("  绘制:", umap_info$label, "\n")
 
+  # 暂时将当前UMAP设置为标准名称（plot_cells只接受标准名称）
+  # 保存原有的UMAP（如果存在）
+  original_umap <- NULL
+  if ("UMAP" %in% reducedDimNames(cds)) {
+    original_umap <- reducedDim(cds, "UMAP")
+  }
+
+  # 将当前UMAP复制为标准名称
+  reducedDim(cds, "UMAP") <- reducedDim(cds, umap_name)
+
   # 绘制轨迹图
   p <- plot_cells(
     cds,
-    reduction_method = umap_name,
+    reduction_method = "UMAP",  # 使用标准名称
     color_cells_by = "cell_type",
     label_cell_groups = LABEL_CELL_GROUPS,
     label_leaves = LABEL_LEAVES,
@@ -676,6 +686,11 @@ for (umap_info in all_umaps) {
       plot.subtitle = element_text(size = 12, color = "gray40"),
       legend.position = "right"
     )
+
+  # 恢复原有的UMAP
+  if (!is.null(original_umap)) {
+    reducedDim(cds, "UMAP") <- original_umap
+  }
 
   # 保存图片
   output_file <- file.path(dirs$trajectory,
@@ -704,10 +719,17 @@ for (umap_info in all_umaps) {
 
   cat("  绘制:", umap_info$label, "\n")
 
+  # 暂时将当前UMAP设置为标准名称
+  original_umap <- NULL
+  if ("UMAP" %in% reducedDimNames(cds)) {
+    original_umap <- reducedDim(cds, "UMAP")
+  }
+  reducedDim(cds, "UMAP") <- reducedDim(cds, umap_name)
+
   # 绘制伪时间图
   p <- plot_cells(
     cds,
-    reduction_method = umap_name,
+    reduction_method = "UMAP",  # 使用标准名称
     color_cells_by = "pseudotime",
     label_cell_groups = FALSE,
     label_leaves = FALSE,
@@ -726,6 +748,11 @@ for (umap_info in all_umaps) {
       plot.subtitle = element_text(size = 12, color = "gray40"),
       legend.position = "right"
     )
+
+  # 恢复原有的UMAP
+  if (!is.null(original_umap)) {
+    reducedDim(cds, "UMAP") <- original_umap
+  }
 
   # 保存图片
   output_file <- file.path(dirs$pseudotime,
