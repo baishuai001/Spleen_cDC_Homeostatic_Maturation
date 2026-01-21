@@ -764,8 +764,54 @@ if (length(early_cells) > 0) {
   cds <- order_cells(cds, root_cells = colnames(cds)[early_cells])
   cat("✓ 伪时间计算完成（自动根节点）\n")
 } else {
-  cat("⚠ 未找到早期细胞，使用默认根节点\n")
-  cds <- order_cells(cds)
+  cat("  ⚠ 未找到匹配的早期细胞！\n\n")
+
+  # 检查是否为交互式环境
+  is_interactive <- interactive()
+
+  if (is_interactive) {
+    cat("  在交互式环境中，您可以手动选择根节点：\n")
+    cat("  请在弹出的图中点击轨迹起点（左侧的细胞群）...\n\n")
+
+    # 交互式选择根节点
+    cds <- order_cells(cds)
+    cat("\n✓ 伪时间计算完成（交互式选择的根节点）\n")
+
+  } else {
+    cat("❌ 错误：在非交互式环境中无法自动选择根节点！\n\n")
+    cat("可能的原因：\n")
+    cat("  1. 细胞类型名称不匹配\n")
+    cat("     - 脚本期望: '", paste(mode_early_markers, collapse = "', '"), "'\n", sep = "")
+    cat("     - 请检查上方'数据中的细胞类型'列表中的实际名称\n\n")
+    cat("  2. 数据中没有早期细胞（已被过滤）\n\n")
+
+    # ⭐ 备用方案：基于 UMAP 坐标选择根节点
+    cat("尝试备用方案：基于 UMAP 坐标选择根节点...\n")
+    cat("  根据作者论文，轨迹起点在 UMAP 左侧区域\n\n")
+
+    # 获取 UMAP 坐标
+    umap_coords <- reducedDims(cds)[["UMAP"]]
+
+    # 选择左侧的细胞作为候选根节点（UMAP_1 < -8）
+    left_cells <- which(umap_coords[, 1] < -8)
+
+    if (length(left_cells) > 0) {
+      # 从左侧细胞中选择最左侧的100个细胞作为根节点
+      left_x_coords <- umap_coords[left_cells, 1]
+      most_left_indices <- order(left_x_coords)[1:min(100, length(left_cells))]
+      root_cell_indices <- left_cells[most_left_indices]
+
+      cat("  找到", length(left_cells), "个左侧细胞\n")
+      cat("  选择最左侧的", length(root_cell_indices), "个细胞作为根节点\n\n")
+
+      cds <- order_cells(cds, root_cells = colnames(cds)[root_cell_indices])
+      cat("✓ 伪时间计算完成（基于 UMAP 坐标的根节点）\n")
+      cat("  提示：请检查伪时间图，确认方向正确（左侧应为低伪时间）\n\n")
+
+    } else {
+      stop("无法找到合适的根节点细胞。请在交互式环境中运行或修正细胞类型名称。")
+    }
+  }
 }
 
 # 伪时间统计
@@ -857,6 +903,28 @@ monocle3_sig_genes <- monocle3_genes %>%
 
 cat("总基因数:", nrow(monocle3_genes), "\n")
 cat("显著基因数 (q < 0.05):", nrow(monocle3_sig_genes), "\n\n")
+
+# ⭐ 诊断信息：如果没有找到显著基因
+if (nrow(monocle3_sig_genes) == 0) {
+  cat("\n⚠ 警告：未找到显著的轨迹依赖基因！\n\n")
+  cat("可能的原因：\n")
+  cat("  1. 伪时间根节点选择错误（最常见原因）\n")
+  cat("     - 检查上方伪时间图，左侧细胞应为低伪时间（蓝/紫色）\n")
+  cat("     - 如果左侧细胞是高伪时间（黄色），说明方向反了\n\n")
+  cat("  2. 轨迹计算问题\n")
+  cat("     - 数据可能缺乏清晰的分化轨迹\n\n")
+
+  # 显示放宽阈值后的基因数
+  cat("使用更宽松阈值的基因数:\n")
+  cat("  q < 0.1 :", sum(monocle3_genes$q_value < 0.1, na.rm = TRUE), "个基因\n")
+  cat("  q < 0.2 :", sum(monocle3_genes$q_value < 0.2, na.rm = TRUE), "个基因\n")
+  cat("  p < 0.05:", sum(monocle3_genes$p_value < 0.05, na.rm = TRUE), "个基因\n\n")
+
+  # 显示 q-value 分布
+  cat("q-value 分布：\n")
+  cat("  最小 q:", min(monocle3_genes$q_value, na.rm = TRUE), "\n")
+  cat("  前10个基因的 q-values:", paste(head(sort(monocle3_genes$q_value), 10), collapse = " "), "\n\n")
+}
 
 # 保存结果
 monocle3_genes_df <- monocle3_genes %>%
