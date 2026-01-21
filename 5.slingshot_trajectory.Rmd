@@ -1,0 +1,136 @@
+---
+title: "Slingshot Trajectory Analysis for cDC CITE-seq"
+output: html_document
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width = 7, fig.height = 6)
+
+suppressPackageStartupMessages({
+  library(Seurat)
+  library(SeuratWrappers)
+  library(SingleCellExperiment)
+  library(slingshot)
+  library(ggplot2)
+  library(dplyr)
+})
+```
+
+## 1. Parameters
+
+```{r parameters}
+mode <- "cDC1"  # change to cDC2 or other modes if needed
+seurat_path <- file.path("results", mode, "Robjects", "seurat_obj_annotated.rds")
+output_dir <- file.path("results", mode, "Trajectory", "Slingshot")
+
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+## 2. Load Seurat object
+
+```{r load-seurat}
+if (!file.exists(seurat_path)) {
+  stop("Seurat object not found: ", seurat_path)
+}
+
+seurat_obj <- readRDS(seurat_path)
+
+if (!"author_annotation" %in% colnames(seurat_obj@meta.data)) {
+  stop("Missing `author_annotation` in metadata. Please ensure annotations are loaded.")
+}
+```
+
+## 3. Convert to SingleCellExperiment
+
+```{r convert-sce}
+sce <- as.SingleCellExperiment(seurat_obj)
+
+reduction_map <- list(
+  rna = "umap",
+  adt = "adt_umap",
+  wnn = "wnn_umap"
+)
+
+for (reduction_name in reduction_map) {
+  if (!reduction_name %in% names(seurat_obj@reductions)) {
+    message("Reduction not found in Seurat object: ", reduction_name)
+  } else {
+    reducedDims(sce)[[reduction_name]] <- Embeddings(seurat_obj, reduction_name)
+  }
+}
+```
+
+## 4. Slingshot helper
+
+```{r slingshot-helper}
+run_slingshot <- function(sce_obj, reduction_name, label) {
+  if (!reduction_name %in% names(reducedDims(sce_obj))) {
+    message("Skipping missing reduction: ", reduction_name)
+    return(NULL)
+  }
+
+  message("Running Slingshot on: ", reduction_name)
+  sce_obj <- slingshot(
+    sce_obj,
+    clusterLabels = "author_annotation",
+    reducedDim = reduction_name
+  )
+
+  umap_coords <- as.data.frame(reducedDims(sce_obj)[[reduction_name]])
+  colnames(umap_coords) <- c("UMAP_1", "UMAP_2")
+  umap_coords$cell_id <- rownames(umap_coords)
+  umap_coords$cell_type <- colData(sce_obj)$author_annotation
+
+  plot_path <- file.path(output_dir, paste0("slingshot_", label, ".png"))
+  png(plot_path, width = 1600, height = 1400, res = 200)
+  plot(
+    umap_coords$UMAP_1,
+    umap_coords$UMAP_2,
+    col = as.factor(umap_coords$cell_type),
+    pch = 16,
+    cex = 0.4,
+    xlab = "UMAP 1",
+    ylab = "UMAP 2",
+    main = paste("Slingshot Trajectory -", toupper(label))
+  )
+  lines(SlingshotDataSet(sce_obj), lwd = 2, col = "black")
+  dev.off()
+
+  pseudotime <- as.data.frame(slingPseudotime(sce_obj))
+  pseudotime$cell_id <- rownames(pseudotime)
+  pseudotime$cell_type <- colData(sce_obj)$author_annotation
+
+  pseudotime_path <- file.path(output_dir, paste0("pseudotime_", label, ".csv"))
+  write.csv(pseudotime, pseudotime_path, row.names = FALSE)
+
+  weights <- as.data.frame(slingCurveWeights(sce_obj))
+  weights$cell_id <- rownames(weights)
+  weights_path <- file.path(output_dir, paste0("curve_weights_", label, ".csv"))
+  write.csv(weights, weights_path, row.names = FALSE)
+
+  return(list(
+    sce = sce_obj,
+    plot = plot_path,
+    pseudotime = pseudotime_path,
+    weights = weights_path
+  ))
+}
+```
+
+## 5. Run Slingshot on three UMAP spaces
+
+```{r slingshot-run}
+results <- list(
+  rna = run_slingshot(sce, "umap", "rna"),
+  adt = run_slingshot(sce, "adt_umap", "adt"),
+  wnn = run_slingshot(sce, "wnn_umap", "wnn")
+)
+
+results
+```
+
+## 6. Session info
+
+```{r session-info}
+sessionInfo()
+```
