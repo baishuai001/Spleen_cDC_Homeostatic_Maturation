@@ -835,7 +835,7 @@ if (length(early_cells) > 0) {
 
   if (is_interactive) {
     cat("  在交互式环境中，您可以手动选择根节点：\n")
-    cat("  请在弹出的图中点击轨迹起点...\n\n")
+    cat("  请在弹出的图中点击轨迹起点（左侧的细胞群）...\n\n")
 
     # 交互式选择根节点
     cds <- order_cells(cds)
@@ -848,12 +848,33 @@ if (length(early_cells) > 0) {
     cat("     - 脚本期望: '", paste(early_markers, collapse = "', '"), "'\n", sep = "")
     cat("     - 请检查上方'数据中的细胞类型'列表中的实际名称\n\n")
     cat("  2. 数据中没有早期细胞（已被过滤）\n\n")
-    cat("解决方法：\n")
-    cat("  选项1：修正 early_celltype_markers 列表，使用数据中的实际名称\n")
-    cat("  选项2：在 RStudio Console 中交互式运行此代码块\n")
-    cat("  选项3：手动指定根节点细胞 ID\n\n")
 
-    stop("无法在非交互式环境中继续。请检查细胞类型名称或使用交互式环境。")
+    # ⭐ 备用方案：基于 UMAP 坐标选择根节点
+    cat("尝试备用方案：基于 UMAP 坐标选择根节点...\n")
+    cat("  根据作者论文，轨迹起点在 UMAP 左侧区域\n\n")
+
+    # 获取 UMAP 坐标
+    umap_coords <- reducedDims(cds)[["UMAP"]]
+
+    # 选择左侧的细胞作为候选根节点（UMAP_1 < -8）
+    left_cells <- which(umap_coords[, 1] < -8)
+
+    if (length(left_cells) > 0) {
+      # 从左侧细胞中选择最左侧的100个细胞作为根节点
+      left_x_coords <- umap_coords[left_cells, 1]
+      most_left_indices <- order(left_x_coords)[1:min(100, length(left_cells))]
+      root_cell_indices <- left_cells[most_left_indices]
+
+      cat("  找到", length(left_cells), "个左侧细胞\n")
+      cat("  选择最左侧的", length(root_cell_indices), "个细胞作为根节点\n\n")
+
+      cds <- order_cells(cds, root_cells = colnames(cds)[root_cell_indices])
+      cat("✓ 伪时间计算完成（基于 UMAP 坐标的根节点）\n")
+      cat("  提示：请检查伪时间图，确认方向正确（左侧应为低伪时间）\n\n")
+
+    } else {
+      stop("无法找到合适的根节点细胞。请在交互式环境中运行或修正细胞类型名称。")
+    }
   }
 }
 
