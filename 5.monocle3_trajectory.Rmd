@@ -445,7 +445,7 @@ cat("  基因数:", nrow(cds), "\n")
 cds$cell_type <- seurat_obj@meta.data[[CELL_TYPE_COL]]
 cds$cell_type <- factor(cds$cell_type)
 
-cat("  细胞类型数:", length(levels(cds$cell_type)), "\n")
+cat("  细胞类型数:", length(levels(colData(cds)$cell_type)), "\n")
 ```
 
 ## 添加降维结果
@@ -582,17 +582,17 @@ if (is.null(START_CELL_TYPE)) {
   potential_starts <- c("Pre-cDC1s", "Pre-cDC2s", "pre-cDC1", "pre-cDC2",
                        "Progenitor", "progenitor", "Early")
 
-  found_starts <- potential_starts[potential_starts %in% levels(cds$cell_type)]
+  found_starts <- potential_starts[potential_starts %in% levels(colData(cds)$cell_type)]
 
   if (length(found_starts) > 0) {
     START_CELL_TYPE <- found_starts[1]
     cat("✓ 自动检测起点:", START_CELL_TYPE, "\n")
   } else {
     cat("⚠ 未找到典型起点细胞类型\n")
-    cat("可用细胞类型:", paste(levels(cds$cell_type), collapse=", "), "\n")
+    cat("可用细胞类型:", paste(levels(colData(cds)$cell_type), collapse=", "), "\n")
 
     # 使用第一个细胞类型
-    START_CELL_TYPE <- levels(cds$cell_type)[1]
+    START_CELL_TYPE <- levels(colData(cds)$cell_type)[1]
     cat("使用默认起点:", START_CELL_TYPE, "\n")
   }
 } else {
@@ -600,7 +600,7 @@ if (is.null(START_CELL_TYPE)) {
 }
 
 # 获取起点细胞（使用细胞名称，不是索引）
-start_cells <- colnames(cds)[cds$cell_type == START_CELL_TYPE]
+start_cells <- colnames(cds)[colData(cds)$cell_type == START_CELL_TYPE]
 
 if (length(start_cells) == 0) {
   stop("错误：未找到起点细胞类型 '", START_CELL_TYPE, "'")
@@ -618,8 +618,8 @@ cds <- order_cells(cds, root_cells = start_cells)
 # 检查伪时间
 if ("pseudotime" %in% colnames(colData(cds))) {
   cat("✓ 伪时间计算完成\n")
-  cat("  伪时间范围:", round(range(cds$pseudotime, na.rm=TRUE), 3), "\n")
-  cat("  NA值数量:", sum(is.na(cds$pseudotime)), "\n")
+  cat("  伪时间范围:", round(range(pseudotime(cds), na.rm=TRUE), 3), "\n")
+  cat("  NA值数量:", sum(is.na(pseudotime(cds))), "\n")
 } else {
   warning("警告：伪时间未计算成功")
 }
@@ -773,8 +773,8 @@ cat(rep("=", 80), "\n", sep="")
 
 # 准备数据
 pt_df <- data.frame(
-  cell_type = cds$cell_type,
-  pseudotime = cds$pseudotime
+  cell_type = colData(cds)$cell_type,
+  pseudotime = pseudotime(cds)
 )
 
 # 去除NA
@@ -994,7 +994,7 @@ if (exists("sig_genes") && nrow(sig_genes) > 0) {
   expr_mat <- normalized_counts(cds)[top_genes, , drop = FALSE]
 
   # 按伪时间排序细胞
-  cell_order <- order(cds$pseudotime, na.last = NA)
+  cell_order <- order(pseudotime(cds), na.last = NA)
   expr_mat <- expr_mat[, cell_order, drop = FALSE]
 
   # 按基因Moran's I排序
@@ -1009,8 +1009,8 @@ if (exists("sig_genes") && nrow(sig_genes) > 0) {
 
   # 准备注释
   cell_annotation <- data.frame(
-    cell_type = cds$cell_type[cell_order],
-    pseudotime = cds$pseudotime[cell_order]
+    cell_type = colData(cds)$cell_type[cell_order],
+    pseudotime = pseudotime(cds)[cell_order]
   )
   rownames(cell_annotation) <- colnames(expr_scaled)
 
@@ -1067,7 +1067,7 @@ cat("\n保存添加伪时间的Seurat对象\n")
 cat(rep("=", 80), "\n", sep="")
 
 # 将伪时间添加回Seurat对象
-seurat_obj$monocle3_pseudotime <- cds$pseudotime
+seurat_obj$monocle3_pseudotime <- pseudotime(cds)
 
 output_file <- file.path(dirs$robjects, "seurat_with_pseudotime.rds")
 saveRDS(seurat_obj, output_file)
@@ -1083,8 +1083,8 @@ cat(rep("=", 80), "\n", sep="")
 # 1. 伪时间表格
 pseudotime_df <- data.frame(
   cell_id = colnames(cds),
-  cell_type = cds$cell_type,
-  pseudotime = cds$pseudotime
+  cell_type = colData(cds)$cell_type,
+  pseudotime = pseudotime(cds)
 )
 
 output_file <- file.path(dirs$tables, "pseudotime_by_cell.csv")
@@ -1128,12 +1128,12 @@ cat("  使用分区:", USE_PARTITION, "\n\n")
 cat("数据统计:\n")
 cat("  细胞数:", ncol(cds), "\n")
 cat("  基因数:", nrow(cds), "\n")
-cat("  细胞类型数:", length(unique(cds$cell_type)), "\n\n")
+cat("  细胞类型数:", length(unique(colData(cds)$cell_type)), "\n\n")
 
 cat("轨迹结果:\n")
 if ("pseudotime" %in% colnames(colData(cds))) {
-  cat("  伪时间范围:", round(range(cds$pseudotime, na.rm=TRUE), 3), "\n")
-  cat("  NA值数量:", sum(is.na(cds$pseudotime)), "\n")
+  cat("  伪时间范围:", round(range(pseudotime(cds), na.rm=TRUE), 3), "\n")
+  cat("  NA值数量:", sum(is.na(pseudotime(cds))), "\n")
 } else {
   cat("  ⚠ 伪时间未计算\n")
 }
