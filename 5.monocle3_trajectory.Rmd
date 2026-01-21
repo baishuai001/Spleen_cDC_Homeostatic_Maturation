@@ -221,9 +221,7 @@ START_CELL_TYPE <- NULL  # 或指定: "Pre-cDC1s"
 OUTPUT_DIR <- paste0("monocle3_analysis_", MODE)
 
 # Monocle3参数
-USE_PARTITION <- FALSE    # 是否使用分区
-MIN_BRANCH_LENGTH <- 10   # 最小分支长度
-PRUNE_GRAPH <- TRUE       # 是否修剪图
+USE_PARTITION <- FALSE    # 是否使用分区（推荐FALSE）
 
 # 差异分析参数
 N_TOP_GENES <- 50
@@ -290,10 +288,7 @@ START_CELL_TYPE <- NULL  # 或 "Pre-cDC1s"
 OUTPUT_DIR <- paste0("monocle3_analysis_", MODE)
 
 # Monocle3参数
-USE_PARTITION <- FALSE        # 分区
-MIN_BRANCH_LENGTH <- 10       # 最小分支长度
-PRUNE_GRAPH <- TRUE           # 修剪图
-NUM_ITER <- 2                 # learn_graph迭代次数
+USE_PARTITION <- FALSE        # 是否使用分区（推荐FALSE）
 
 # 差异分析参数
 N_TOP_GENES <- 50
@@ -556,22 +551,12 @@ if (USE_PARTITION) {
   cat("学习图结构（使用分区）...\n")
   cds <- learn_graph(cds,
                      use_partition = TRUE,
-                     close_loop = FALSE,
-                     learn_graph_control = list(
-                       minimal_branch_len = MIN_BRANCH_LENGTH,
-                       prune_graph = PRUNE_GRAPH,
-                       num_iter = NUM_ITER
-                     ))
+                     close_loop = FALSE)
 } else {
   cat("学习图结构（不使用分区）...\n")
   cds <- learn_graph(cds,
                      use_partition = FALSE,
-                     close_loop = FALSE,
-                     learn_graph_control = list(
-                       minimal_branch_len = MIN_BRANCH_LENGTH,
-                       prune_graph = PRUNE_GRAPH,
-                       num_iter = NUM_ITER
-                     ))
+                     close_loop = FALSE)
 }
 
 cat("✓ 轨迹图学习完成\n")
@@ -1102,8 +1087,7 @@ cat("  模式:", MODE, "\n")
 cat("  主要UMAP:", PRIMARY_UMAP, "\n")
 cat("  细胞类型列:", CELL_TYPE_COL, "\n")
 cat("  起点细胞:", START_CELL_TYPE, "\n")
-cat("  使用分区:", USE_PARTITION, "\n")
-cat("  最小分支长度:", MIN_BRANCH_LENGTH, "\n\n")
+cat("  使用分区:", USE_PARTITION, "\n\n")
 
 cat("数据统计:\n")
 cat("  细胞数:", ncol(cds), "\n")
