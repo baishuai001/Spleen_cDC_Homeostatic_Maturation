@@ -11,21 +11,43 @@ cat("【R版本信息】\n")
 cat("完整版本:", R.version.string, "\n")
 cat("主版本号:", R.version$major, "\n")
 cat("次版本号:", R.version$minor, "\n")
-r_version <- as.numeric(paste(R.version$major, R.version$minor, sep = "."))
-cat("版本号:", r_version, "\n\n")
+
+# 更健壮的版本号解析
+tryCatch({
+  r_version <- as.numeric(paste(R.version$major, R.version$minor, sep = "."))
+  if (is.na(r_version)) {
+    # 备用方法：从version.string解析
+    version_string <- R.version.string
+    version_match <- regmatches(version_string, regexpr("[0-9]+\\.[0-9]+", version_string))
+    if (length(version_match) > 0) {
+      r_version <- as.numeric(version_match[1])
+    } else {
+      r_version <- NA
+    }
+  }
+  cat("版本号:", r_version, "\n\n")
+}, error = function(e) {
+  cat("无法解析版本号\n\n")
+  r_version <<- NA
+})
 
 # 版本兼容性检查
 cat("【版本兼容性分析】\n")
-if (r_version >= 4.3) {
-  cat("✓ R版本优秀 (>= 4.3) - 支持所有最新R包\n")
-} else if (r_version >= 4.2) {
-  cat("✓ R版本良好 (>= 4.2) - 支持Matrix 1.6.3+\n")
-} else if (r_version >= 4.0) {
-  cat("⚠ R版本较旧 (4.0-4.1) - 可能需要从源代码编译Matrix\n")
-  cat("  建议升级到R 4.2或更高版本\n")
+if (!is.na(r_version)) {
+  if (r_version >= 4.3) {
+    cat("✓ R版本优秀 (>= 4.3) - 支持所有最新R包\n")
+  } else if (r_version >= 4.2) {
+    cat("✓ R版本良好 (>= 4.2) - 支持Matrix 1.6.3+\n")
+  } else if (r_version >= 4.0) {
+    cat("⚠ R版本较旧 (4.0-4.1) - 可能需要从源代码编译Matrix\n")
+    cat("  建议升级到R 4.2或更高版本\n")
+  } else {
+    cat("✗ R版本过旧 (< 4.0) - 不支持最新版本的Seurat和Matrix\n")
+    cat("  强烈建议升级到R 4.3或更高版本\n")
+  }
 } else {
-  cat("✗ R版本过旧 (< 4.0) - 不支持最新版本的Seurat和Matrix\n")
-  cat("  强烈建议升级到R 4.3或更高版本\n")
+  cat("⚠ 无法确定R版本号，请手动检查\n")
+  cat("  运行 R.version.string 查看完整版本信息\n")
 }
 cat("\n")
 
@@ -86,9 +108,15 @@ cat("=================================================================\n")
 cat("【诊断建议】\n")
 cat("=================================================================\n\n")
 
-if (r_version < 4.2) {
+if (is.na(r_version)) {
+  cat("⚠ 无法确定R版本\n")
+  cat("   请手动运行以下命令检查:\n")
+  cat("   R.version.string\n")
+  cat("   sessionInfo()\n\n")
+
+} else if (r_version < 4.2) {
   cat("🔴 紧急建议: 升级R版本\n")
-  cat("   当前R版本不支持Matrix 1.6.3+\n")
+  cat("   当前R版本 (", r_version, ") 不支持Matrix 1.6.3+\n")
   cat("   请从 https://cran.r-project.org/ 下载R 4.3或更高版本\n\n")
 
   cat("升级步骤:\n")
@@ -98,20 +126,25 @@ if (r_version < 4.2) {
   cat("4. 运行: install.packages(c('Matrix', 'Seurat'))\n\n")
 
 } else {
-  matrix_version <- as.character(packageVersion("Matrix"))
-  if (compareVersion(matrix_version, "1.6.3") < 0) {
-    cat("🟡 建议: 更新Matrix包\n")
-    cat("   你的R版本支持Matrix 1.6.3+，但当前安装的版本过低\n\n")
+  if (requireNamespace("Matrix", quietly = TRUE)) {
+    matrix_version <- as.character(packageVersion("Matrix"))
+    if (compareVersion(matrix_version, "1.6.3") < 0) {
+      cat("🟡 建议: 更新Matrix包\n")
+      cat("   你的R版本 (", r_version, ") 支持Matrix 1.6.3+，但当前安装的版本 (", matrix_version, ") 过低\n\n")
 
-    cat("更新方法:\n")
-    cat("1. 退出R\n")
-    cat("2. 重新启动R\n")
-    cat("3. 运行: remove.packages('Matrix')\n")
-    cat("4. 运行: install.packages('Matrix', type='both')\n")
-    cat("5. 如果仍然失败，运行: source('force_fix_matrix.R')\n\n")
+      cat("更新方法:\n")
+      cat("1. 退出R: q()\n")
+      cat("2. 重新启动R\n")
+      cat("3. 运行: remove.packages('Matrix')\n")
+      cat("4. 运行: install.packages('Matrix', type='both')\n")
+      cat("5. 如果仍然失败，运行: source('force_fix_matrix.R')\n\n")
+    } else {
+      cat("🟢 一切正常!\n")
+      cat("   你的R环境配置良好，可以运行CITEViz分析\n\n")
+    }
   } else {
-    cat("🟢 一切正常!\n")
-    cat("   你的R环境配置良好，可以运行CITEViz分析\n\n")
+    cat("⚠ Matrix包未安装\n")
+    cat("   运行: install.packages('Matrix')\n\n")
   }
 }
 
