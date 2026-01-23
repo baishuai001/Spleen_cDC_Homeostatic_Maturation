@@ -204,6 +204,149 @@ DimPlot(seuratObj, reduction = "ADT_umap", group.by = "manual_gate_cDC1")
 ✅ **可重复性**: 导出gate参数用于后续分析
 ✅ **整合分析**: 同时查看ADT和RNA数据
 
+## 故障排除
+
+### 问题1: Matrix包版本错误
+
+**错误信息**:
+```
+Error: package or namespace load failed for 'SeuratObject' in loadNamespace...
+载入了名字空间'Matrix' 1.6-2，但需要的是>= 1.6.3
+```
+
+**解决方案**:
+
+#### 方法1: 使用快速修复脚本 (推荐)
+```r
+source("quick_fix_matrix.R")
+```
+
+#### 方法2: 使用完整修复脚本
+```r
+source("fix_dependencies.R")
+```
+
+#### 方法3: 手动修复
+```r
+# 1. 卸载旧版本
+remove.packages("Matrix")
+
+# 2. 重启R会话
+# RStudio: Session > Restart R
+# 或命令行: q() 然后重新启动
+
+# 3. 安装最新版本
+install.packages("Matrix")
+
+# 4. 验证版本
+packageVersion("Matrix")  # 应该 >= 1.6.3
+
+# 5. 重新加载Seurat
+library(Seurat)
+```
+
+### 问题2: CITEViz安装失败
+
+**可能原因**: 缺少依赖包或网络问题
+
+**解决方案**:
+```r
+# 确保安装所有依赖
+install.packages(c("shiny", "plotly", "DT", "ggplot2", "dplyr"))
+
+# 使用devtools安装CITEViz
+install.packages("devtools")
+devtools::install_github("maxsonBraunLab/CITE-Viz", dependencies = TRUE)
+
+# 如果GitHub访问有问题，可以尝试镜像或下载zip包手动安装
+```
+
+### 问题3: Seurat对象缺少ADT assay
+
+**错误信息**: `Error: Seurat object does not contain ADT assay`
+
+**解决方案**:
+确保使用的是从`3.RNA-ADT_HPCscript.R`生成的包含ADT数据的Seurat对象。检查:
+```r
+# 检查可用的assays
+names(seuratObj@assays)
+# 应该包含: "RNA", "ADT", "SCT"
+
+# 如果缺少ADT assay，可能需要重新运行script 3
+```
+
+### 问题4: ADT数据未归一化
+
+**警告信息**: `Warning: ADT assay may not be normalized`
+
+**解决方案**:
+脚本会自动进行CLR归一化，但你也可以手动执行:
+```r
+seuratObj <- NormalizeData(
+  seuratObj,
+  assay = "ADT",
+  normalization.method = "CLR"
+)
+```
+
+### 问题5: CITEViz应用无法启动
+
+**可能原因**: 端口占用或Shiny配置问题
+
+**解决方案**:
+```r
+# 尝试指定不同的端口
+options(shiny.port = 8888)
+run_app(seurat_object = seuratObj)
+
+# 或者在浏览器中手动打开
+options(shiny.launch.browser = TRUE)
+run_app(seurat_object = seuratObj)
+```
+
+### 问题6: 内存不足
+
+**症状**: R崩溃或响应缓慢
+
+**解决方案**:
+```r
+# 1. 增加R的内存限制 (Windows)
+memory.limit(size = 16000)  # 16GB
+
+# 2. 使用子集进行分析
+# 先分析cDC1或cDC2子集，而不是完整对象
+subset_obj <- subset(seuratObj, subset = SCT_clusters %in% c("0", "1", "2"))
+
+# 3. 降采样
+subset_obj <- subset(seuratObj, downsample = 5000)
+```
+
+### 问题7: R包版本冲突
+
+**解决方案**:
+```r
+# 更新所有包到最新版本
+update.packages(ask = FALSE)
+
+# 检查关键包版本
+packageVersion("Seurat")        # 推荐 >= 4.0
+packageVersion("SeuratObject")  # 推荐 >= 4.0
+packageVersion("Matrix")        # 必须 >= 1.6.3
+packageVersion("dplyr")         # 推荐 >= 1.0
+
+# 如果问题持续，考虑重新安装R (>= 4.2)
+```
+
+### 问题8: 找不到特定ADT标记物
+
+**检查可用标记物**:
+```r
+# 查看所有可用的ADT标记物
+rownames(seuratObj@assays$ADT)
+
+# 在CITEViz中，ADT标记物名称应该与此列表匹配
+```
+
 ## 常见问题
 
 ### Q1: CITEViz需要什么格式的输入?
