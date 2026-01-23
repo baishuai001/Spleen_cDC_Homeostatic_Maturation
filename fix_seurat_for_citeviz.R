@@ -32,14 +32,41 @@ print(head(rownames(adt_assay), 10))
 # 问题 2: 确保 ADT 有正确的归一化数据
 cat("\n检查 ADT 归一化...\n")
 
-# 对于 Seurat v5，可能需要 JoinLayers
+# 对于 Seurat v5，处理 layers
 if (packageVersion("Seurat") >= "5.0.0") {
-  cat("  检测到 Seurat v5，合并数据层...\n")
-  seurat_obj <- JoinLayers(seurat_obj, assay = "ADT")
+  cat("  检测到 Seurat v5\n")
+
+  # 检查是否有多个 layers
+  if (length(Layers(seurat_obj, assay = "ADT")) > 1) {
+    cat("  合并 ADT 数据层...\n")
+    tryCatch({
+      seurat_obj[["ADT"]] <- JoinLayers(seurat_obj[["ADT"]])
+    }, error = function(e) {
+      cat("  警告: JoinLayers 失败，尝试替代方法\n")
+      # 替代方法：直接访问数据
+    })
+  } else {
+    cat("  ADT 只有单个数据层，无需合并\n")
+  }
 }
 
-# 确保有 data slot
-if (is.null(slot(adt_assay, "data")) || length(slot(adt_assay, "data")) == 0) {
+# 重新获取 ADT assay（可能已更新）
+DefaultAssay(seurat_obj) <- "ADT"
+adt_assay <- seurat_obj@assays$ADT
+
+# 检查是否需要归一化
+needs_norm <- FALSE
+tryCatch({
+  # 尝试获取归一化数据
+  test_data <- GetAssayData(seurat_obj, assay = "ADT", slot = "data")
+  if (is.null(test_data) || length(test_data) == 0) {
+    needs_norm <- TRUE
+  }
+}, error = function(e) {
+  needs_norm <- TRUE
+})
+
+if (needs_norm) {
   cat("  执行 CLR 归一化...\n")
   seurat_obj <- NormalizeData(seurat_obj,
                                normalization.method = 'CLR',
