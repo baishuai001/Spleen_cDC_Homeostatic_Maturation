@@ -9,14 +9,30 @@ cat("=================================================\n\n")
 
 # 参数设置
 ORIGINAL_FILE <- "results/cDC1/Robjects/seurat_obj_annotated.rds"
+COMPATIBLE_FILE <- "results/integrated/Robjects/seurat_obj_citeviz_compatible.rds"  # 可能已存在的兼容文件
 OUTPUT_FAST <- "citeviz_fast_5k.rds"      # 快速版（5000细胞）
 OUTPUT_MEDIUM <- "citeviz_medium_8k.rds"  # 中等版（8000细胞）
 OUTPUT_FULL <- "citeviz_full_compatible.rds"  # 完整版（所有细胞）
 
-cat("加载原始数据:", ORIGINAL_FILE, "\n")
-seurat_obj <- readRDS(ORIGINAL_FILE)
+# 智能加载：优先使用已有的兼容文件
+if (file.exists(COMPATIBLE_FILE)) {
+  cat("✓ 发现已有兼容文件:", COMPATIBLE_FILE, "\n")
+  cat("  跳过兼容性处理，直接使用\n\n")
+  seurat_obj <- readRDS(COMPATIBLE_FILE)
+} else if (file.exists(OUTPUT_FULL)) {
+  cat("✓ 发现本地完整兼容文件:", OUTPUT_FULL, "\n")
+  cat("  跳过兼容性处理，直接使用\n\n")
+  seurat_obj <- readRDS(OUTPUT_FULL)
+} else {
+  cat("未找到兼容文件，从原始数据创建...\n")
+  cat("  加载:", ORIGINAL_FILE, "\n")
+  seurat_obj <- readRDS(ORIGINAL_FILE)
 
-cat("\n原始数据:\n")
+  # 稍后会创建兼容对象
+  NEEDS_COMPATIBILITY <- TRUE
+}
+
+cat("\n数据信息:\n")
 cat("  细胞数:", ncol(seurat_obj), "\n")
 cat("  基因数:", nrow(seurat_obj@assays$RNA), "\n")
 cat("  ADT数:", nrow(seurat_obj@assays$ADT), "\n\n")
@@ -103,11 +119,20 @@ smart_sample <- function(seurat_obj, n_cells) {
   return(seurat_obj)
 }
 
+# 如果需要，先创建完整的兼容对象
+if (exists("NEEDS_COMPATIBILITY") && NEEDS_COMPATIBILITY) {
+  cat("\n创建完整兼容对象（首次运行）...\n")
+  seurat_obj <- create_compatible(seurat_obj)
+  # 保存完整版
+  saveRDS(seurat_obj, OUTPUT_FULL)
+  cat("✓ 保存完整兼容对象:", OUTPUT_FULL, "\n")
+}
+
 # 生成文件 1：快速版（推荐）
 cat("\n生成文件 1/3: 快速版（5000 细胞）\n")
 cat("用途：快速探索，响应最快，推荐首次使用\n")
 seurat_fast <- smart_sample(seurat_obj, 5000)
-seurat_fast <- create_compatible(seurat_fast)
+# 不需要再次 create_compatible，因为 seurat_obj 已经是兼容的
 saveRDS(seurat_fast, OUTPUT_FAST)
 cat("✓ 保存:", OUTPUT_FAST, "\n")
 cat("  文件大小:", round(file.size(OUTPUT_FAST) / 1024^2, 1), "MB\n")
@@ -116,18 +141,23 @@ cat("  文件大小:", round(file.size(OUTPUT_FAST) / 1024^2, 1), "MB\n")
 cat("\n生成文件 2/3: 中等版（8000 细胞）\n")
 cat("用途：平衡性能和细节，适合常规分析\n")
 seurat_medium <- smart_sample(seurat_obj, 8000)
-seurat_medium <- create_compatible(seurat_medium)
 saveRDS(seurat_medium, OUTPUT_MEDIUM)
 cat("✓ 保存:", OUTPUT_MEDIUM, "\n")
 cat("  文件大小:", round(file.size(OUTPUT_MEDIUM) / 1024^2, 1), "MB\n")
 
-# 生成文件 3：完整版
-cat("\n生成文件 3/3: 完整版（所有细胞）\n")
-cat("用途：最终分析，包含所有数据（可能较慢）\n")
-seurat_full <- create_compatible(seurat_obj)
-saveRDS(seurat_full, OUTPUT_FULL)
-cat("✓ 保存:", OUTPUT_FULL, "\n")
-cat("  文件大小:", round(file.size(OUTPUT_FULL) / 1024^2, 1), "MB\n")
+# 生成文件 3：完整版（如果还没有）
+if (!exists("NEEDS_COMPATIBILITY") || !NEEDS_COMPATIBILITY) {
+  cat("\n生成文件 3/3: 完整版（复制现有兼容对象）\n")
+  cat("用途：最终分析，包含所有数据（可能较慢）\n")
+  # 只是复制，不需要重新创建
+  file.copy(
+    if (file.exists(COMPATIBLE_FILE)) COMPATIBLE_FILE else OUTPUT_FULL,
+    OUTPUT_FULL,
+    overwrite = TRUE
+  )
+  cat("✓ 保存:", OUTPUT_FULL, "\n")
+  cat("  文件大小:", round(file.size(OUTPUT_FULL) / 1024^2, 1), "MB\n")
+}
 
 # 总结
 cat("\n=================================================\n")
