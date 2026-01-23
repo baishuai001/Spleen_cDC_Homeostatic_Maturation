@@ -1,0 +1,283 @@
+---
+title: "CITEViz 使用教程"
+author: "cDC Homeostatic Maturation Project"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cosmo
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, warning = FALSE, message = FALSE)
+```
+
+# CITEViz 使用教程
+
+## 问题发现
+
+感谢用户指出：**在启动脚本中下采样没有意义，因为 CITEViz 启动后还需要上传文件。**
+
+这个观察完全正确！下采样应该在文件准备阶段，而不是启动阶段。
+
+---
+
+## 正确的两步流程
+
+### 第 1 步：准备数据文件
+
+运行一次，准备不同大小的文件供上传：
+
+```{r prepare-data}
+# 在 R 中运行
+source("prepare_citeviz_data.R")
+```
+
+**输出文件**（3个）：
+- `citeviz_fast_5k.rds` - 5000 细胞（推荐首次使用）
+- `citeviz_medium_8k.rds` - 8000 细胞（平衡版）
+- `citeviz_full_compatible.rds` - 所有细胞（完整版）
+
+**为什么需要这一步**：
+✅ 创建兼容 CITEViz 的对象格式
+✅ 预先下采样，生成不同大小的文件
+✅ 您可以选择合适大小的文件上传
+✅ 下采样在文件中，上传后就是采样后的数据
+
+---
+
+### 第 2 步：启动 CITEViz 并上传文件
+
+每次使用时运行：
+
+```{r launch-citeviz}
+# 在 R 中运行
+source("launch_citeviz.R")
+```
+
+**操作流程**：
+1. 启动后，CITEViz 在浏览器中打开
+2. 看到 "Browse..." 按钮
+3. 点击上传文件：
+   - 首次尝试：`citeviz_fast_5k.rds`（最快）
+   - 如果不卡：`citeviz_medium_8k.rds`
+   - 最终分析：`citeviz_full_compatible.rds`
+
+---
+
+## 对比：错误 vs 正确的理解
+
+### ❌ 错误理解
+
+旧的 `start_citeviz.R` 脚本：
+
+```{r old-way, eval=FALSE}
+# 错误的方式：
+seurat_obj <- readRDS("data.rds")
+seurat_obj <- seurat_obj[, sample(1:ncol(seurat_obj), 5000)]  # 在内存中下采样
+run_app(seurat_object = seurat_obj)  # 启动应用
+
+# 问题：如果 run_app() 不接受对象参数，
+# 启动后仍需上传文件，内存中的下采样就浪费了！
+```
+
+### ✅ 正确理解
+
+新的两步流程：
+
+```{r new-way, eval=FALSE}
+# 正确的方式：
+
+# 步骤 1：准备文件（运行一次）
+seurat_obj <- readRDS("data.rds")
+seurat_sampled <- seurat_obj[, sample(1:ncol(seurat_obj), 5000)]
+saveRDS(seurat_sampled, "citeviz_fast_5k.rds")  # 保存到文件
+
+# 步骤 2：启动应用（每次使用）
+run_app()  # 只启动应用
+
+# 步骤 3：在网页上上传 citeviz_fast_5k.rds
+```
+
+**关键差异**：
+- ❌ 旧方式：下采样在内存中，可能浪费
+- ✅ 新方式：下采样在文件中，上传后生效
+
+---
+
+## 为什么准备 3 个不同大小的文件？
+
+| 文件 | 细胞数 | 用途 | 响应速度 |
+|------|--------|------|----------|
+| **fast_5k** | 5,000 | 快速探索、门控测试 | ⚡️⚡️⚡️⚡️⚡️ |
+| **medium_8k** | 8,000 | 常规分析、平衡版 | ⚡️⚡️⚡️⚡️ |
+| **full** | 18,193 | 最终分析、出图 | ⚡️⚡️ |
+
+**使用策略**：
+1. 先用 `fast_5k` 快速浏览和测试门控策略
+2. 确定分析思路后，用 `medium_8k` 或 `full` 做最终分析
+
+---
+
+## 完整使用示例
+
+### 首次使用（完整流程）
+
+```{r first-time-use}
+# 1. 设置工作目录
+setwd("/home/user/Spleen_cDC_Homeostatic_Maturation")
+
+# 2. 准备数据文件（只需运行一次）
+source("prepare_citeviz_data.R")
+
+# 输出：
+# ✓ 保存: citeviz_fast_5k.rds
+# ✓ 保存: citeviz_medium_8k.rds
+# ✓ 保存: citeviz_full_compatible.rds
+
+# 3. 启动 CITEViz
+source("launch_citeviz.R")
+
+# 4. 在浏览器中：
+#    - 点击 "Browse..."
+#    - 选择 citeviz_fast_5k.rds
+#    - 开始分析
+```
+
+### 后续使用（快速启动）
+
+```{r subsequent-use}
+# 直接启动（文件已准备好）
+source("launch_citeviz.R")
+
+# 然后在网页上传文件
+```
+
+---
+
+## 手动准备数据文件（如果需要自定义）
+
+如果您想自定义采样策略：
+
+```{r custom-sampling}
+library(Seurat)
+
+# 加载数据
+seurat_obj <- readRDS("results/cDC1/Robjects/seurat_obj_annotated.rds")
+
+# 自定义采样（例如：只采样特定细胞类型）
+# 例如：只要 cDC1 相关细胞
+cdc1_cells <- colnames(seurat_obj)[grepl("cDC1", seurat_obj$author_annotation)]
+seurat_subset <- seurat_obj[, cdc1_cells]
+
+# 如果还想进一步下采样
+if (ncol(seurat_subset) > 3000) {
+  set.seed(42)
+  sampled <- sample(colnames(seurat_subset), 3000)
+  seurat_subset <- seurat_subset[, sampled]
+}
+
+# 保存
+saveRDS(seurat_subset, "citeviz_cdc1_only.rds")
+```
+
+---
+
+## 检查准备好的文件
+
+```{r check-files}
+# 列出文件和大小
+files <- list.files(pattern = "^citeviz.*\\.rds$")
+sizes <- sapply(files, function(f) file.size(f) / 1024^2)  # MB
+
+data.frame(
+  File = files,
+  Size_MB = round(sizes, 1)
+)
+```
+
+---
+
+## 脚本对比表
+
+| 脚本 | 功能 | 运行频率 | 输出 |
+|------|------|----------|------|
+| **prepare_citeviz_data.R** | 准备数据文件 | 运行一次 | 3 个 RDS 文件 |
+| **launch_citeviz.R** | 启动 CITEViz | 每次使用 | 浏览器应用 |
+| ~~start_citeviz.R~~ | （旧脚本，已弃用） | - | - |
+
+---
+
+## 常见问题
+
+### Q1: 为什么不能在启动时直接传递对象？
+
+**A**: CITEViz 的设计可能是：
+- 通过文件上传界面加载数据（更灵活）
+- 而不是通过函数参数传递对象
+
+即使 `run_app(seurat_object = obj)` 语法存在，也可能：
+- 不稳定
+- 或仍然会显示上传界面
+
+### Q2: 我可以只准备一个文件吗？
+
+**A**: 可以！修改 `prepare_citeviz_data.R` 或手动准备：
+
+```{r one-file-only}
+library(Seurat)
+
+seurat_obj <- readRDS("results/cDC1/Robjects/seurat_obj_annotated.rds")
+
+# 只准备快速版
+set.seed(42)
+if (ncol(seurat_obj) > 5000) {
+  sampled_cells <- sample(colnames(seurat_obj), 5000)
+  seurat_obj <- seurat_obj[, sampled_cells]
+}
+
+# 创建兼容对象（简化版）
+# ... (见 prepare_citeviz_data.R 的 create_compatible 函数)
+
+saveRDS(seurat_obj, "citeviz_data.rds")
+```
+
+### Q3: 文件在哪里？
+
+```{r find-files}
+# 查看文件位置
+list.files(pattern = "citeviz.*\\.rds", full.names = TRUE)
+
+# 查看文件大小
+file.info(list.files(pattern = "citeviz.*\\.rds"))$size / 1024^2
+```
+
+---
+
+## 总结
+
+**关键要点**：
+1. ✅ 下采样应该在**文件准备阶段**
+2. ✅ 启动阶段只负责**打开应用**
+3. ✅ 上传阶段选择**合适大小的文件**
+
+**正确流程**：
+```
+准备数据（一次） → 启动应用（每次） → 上传文件（选择大小） → 开始分析
+```
+
+---
+
+## 致谢
+
+感谢用户的仔细观察和质疑，发现了关键的逻辑问题！这确保了流程的正确性和合理性。
+
+---
+
+## 相关文件
+
+- `prepare_citeviz_data.R` - 数据准备脚本
+- `launch_citeviz.R` - 应用启动脚本
+- `CITEViz_正确使用流程.md` - 纯文本版说明
