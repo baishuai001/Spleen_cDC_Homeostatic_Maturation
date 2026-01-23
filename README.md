@@ -19,6 +19,7 @@ Here's an overview of the various R scripts used in processing the Bulk and CITE
 - 7.script_CITEseq_SAM_WT_aggr_cDC1_subset_TI_ADT.R: Script for trajectory inference on the ADT assay of the cDC1 subset of the WT_aggr object
 - 8.script_CITEseq_SAM_WT_aggr_cDC1_subset_TI_SCT.R: Script for trajectory inference on the SCT assay of the cDC1 subset of the WT_aggr object
 - 9.script_CITEseq_SAM_WT_aggr_cDC1_subset_Dorothea.R: Script for TF analysis (DoRothEA) of the cDC1 subset of the WT_aggr object
+- 10.script_CITEViz_ADT_analysis.R: Script for interactive FlowJo-like gating analysis of ADT data using CITEViz R-Shiny app (see CITEViz_使用指南.md for detailed instructions)
 
 ## Citation
 
