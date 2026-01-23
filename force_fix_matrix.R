@@ -9,12 +9,34 @@ cat("=================================================================\n\n")
 
 # 检查当前R版本
 cat("当前R版本:", R.version.string, "\n")
-r_version <- as.numeric(paste(R.version$major, R.version$minor, sep = "."))
-cat("R版本号:", r_version, "\n\n")
 
-if (r_version < 4.0) {
-  cat("警告: R版本低于4.0，可能无法安装最新版本的Matrix包\n")
-  cat("建议升级R到4.2或更高版本\n\n")
+# 更健壮的版本号解析
+r_version <- tryCatch({
+  ver <- as.numeric(paste(R.version$major, R.version$minor, sep = "."))
+  if (is.na(ver)) {
+    # 备用方法：从version.string解析
+    version_string <- R.version.string
+    version_match <- regmatches(version_string, regexpr("[0-9]+\\.[0-9]+", version_string))
+    if (length(version_match) > 0) {
+      as.numeric(version_match[1])
+    } else {
+      NA
+    }
+  } else {
+    ver
+  }
+}, error = function(e) {
+  NA
+})
+
+if (!is.na(r_version)) {
+  cat("R版本号:", r_version, "\n\n")
+  if (r_version < 4.0) {
+    cat("警告: R版本低于4.0，可能无法安装最新版本的Matrix包\n")
+    cat("建议升级R到4.2或更高版本\n\n")
+  }
+} else {
+  cat("无法解析R版本号\n\n")
 }
 
 # 检查当前Matrix版本
