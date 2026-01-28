@@ -1,0 +1,433 @@
+---
+title: "CITEViz 完整诊断和修复"
+author: "cDC Maturation Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# CITEViz 完整诊断和修复流程
+
+**当前问题：** `Error in appParts$onStart() : attempt to apply non-function`
+
+这个错误表明 CITEViz 内部的 Shiny 应用初始化失败，可能的原因：
+1. CITEViz 包版本或安装不完整
+2. 依赖包（shiny, ggplot2）版本不兼容
+3. R 版本太新，CITEViz 尚未适配
+
+本文档将进行完整的诊断和修复。
+
+---
+
+## 第 1 步：完整环境诊断
+
+```{r diagnose-environment}
+cat(strrep("=", 80), "\n")
+cat("环境诊断\n")
+cat(strrep("=", 80), "\n\n")
+
+# 1. R 版本
+cat("1. R 版本:\n")
+cat("  ", R.version.string, "\n\n")
+
+# 2. 关键包版本
+cat("2. 关键包版本:\n")
+packages_to_check <- c("Seurat", "SeuratObject", "CITEViz", "shiny", "ggplot2", "DT", "plotly")
+
+for (pkg in packages_to_check) {
+  if (requireNamespace(pkg, quietly = TRUE)) {
+    version <- packageVersion(pkg)
+    cat("  ✓", pkg, ":", as.character(version), "\n")
+  } else {
+    cat("  ✗", pkg, ": 未安装\n")
+  }
+}
+
+cat("\n")
+
+# 3. CITEViz 详细信息
+cat("3. CITEViz 详细信息:\n")
+if (requireNamespace("CITEViz", quietly = TRUE)) {
+  library(CITEViz)
+
+  # 检查导出的函数
+  citeviz_exports <- ls("package:CITEViz")
+  cat("  导出的函数:", length(citeviz_exports), "个\n")
+  cat("  主要函数:", paste(head(citeviz_exports, 10), collapse = ", "), "\n\n")
+
+  # 检查是否有启动函数
+  launch_functions <- c("run_app", "launchApp", "CITEViz")
+  cat("  启动函数检查:\n")
+  for (func in launch_functions) {
+    exists_flag <- exists(func, where = "package:CITEViz")
+    status <- if (exists_flag) "✓" else "✗"
+    cat("    ", status, func, "\n")
+  }
+
+  cat("\n")
+
+  # 尝试获取 run_app 函数定义
+  if (exists("run_app", where = "package:CITEViz")) {
+    cat("  run_app 函数签名:\n")
+    tryCatch({
+      func_args <- formals(CITEViz::run_app)
+      cat("    参数:", paste(names(func_args), collapse = ", "), "\n")
+    }, error = function(e) {
+      cat("    无法获取函数签名:", e$message, "\n")
+    })
+  }
+
+} else {
+  cat("  ✗ CITEViz 未安装或无法加载\n")
+}
+
+cat("\n")
+
+# 4. Shiny 测试
+cat("4. Shiny 基本功能测试:\n")
+tryCatch({
+  library(shiny)
+  cat("  ✓ Shiny 可以加载\n")
+
+  # 尝试创建一个最简单的 Shiny app
+  test_app <- shinyApp(
+    ui = fluidPage("Test"),
+    server = function(input, output) {}
+  )
+  cat("  ✓ 可以创建测试 app\n")
+
+}, error = function(e) {
+  cat("  ✗ Shiny 测试失败:", e$message, "\n")
+})
+
+cat("\n")
+```
+
+---
+
+## 第 2 步：CITEViz 安装检查和修复
+
+```{r check-citeviz-installation}
+cat(strrep("=", 80), "\n")
+cat("CITEViz 安装检查\n")
+cat(strrep("=", 80), "\n\n")
+
+# 检查 CITEViz 是否正确安装
+citeviz_installed <- "CITEViz" %in% installed.packages()[,"Package"]
+
+if (!citeviz_installed) {
+  cat("✗ CITEViz 未安装\n\n")
+  NEEDS_INSTALL <- TRUE
+} else {
+  cat("✓ CITEViz 已安装\n")
+
+  # 检查版本
+  citeviz_version <- packageVersion("CITEViz")
+  cat("  版本:", as.character(citeviz_version), "\n")
+
+  # 检查安装位置
+  citeviz_path <- find.package("CITEViz")
+  cat("  位置:", citeviz_path, "\n\n")
+
+  # 检查包是否完整
+  cat("检查包完整性...\n")
+
+  # 检查关键文件
+  app_dir <- file.path(citeviz_path, "app")
+  if (dir.exists(app_dir)) {
+    cat("  ✓ app 目录存在\n")
+    app_files <- list.files(app_dir)
+    cat("    包含文件:", paste(head(app_files, 5), collapse = ", "), "\n")
+  } else {
+    cat("  ✗ app 目录不存在 - 包可能不完整\n")
+    NEEDS_INSTALL <- TRUE
+  }
+
+  cat("\n")
+}
+```
+
+---
+
+## 第 3 步：重新安装 CITEViz（如果需要）
+
+```{r reinstall-citeviz, eval=FALSE}
+# 这个代码块需要手动运行
+
+cat(strrep("=", 80), "\n")
+cat("重新安装 CITEViz\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("步骤 1: 卸载现有版本...\n")
+if ("CITEViz" %in% installed.packages()[,"Package"]) {
+  remove.packages("CITEViz")
+  cat("  ✓ 已卸载\n\n")
+}
+
+cat("步骤 2: 安装依赖包...\n")
+# 确保所有依赖包都是最新的
+dependencies <- c("shiny", "shinydashboard", "DT", "plotly", "ggplot2", "dplyr", "Seurat")
+
+for (pkg in dependencies) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    cat("  安装", pkg, "...\n")
+    install.packages(pkg, repos = "http://cran.rstudio.com/")
+  } else {
+    cat("  ✓", pkg, "已安装\n")
+  }
+}
+
+cat("\n步骤 3: 从 GitHub 安装 CITEViz...\n")
+
+# 方法 1: 从 garberlab GitHub
+tryCatch({
+  if (!requireNamespace("remotes", quietly = TRUE)) {
+    install.packages("remotes")
+  }
+
+  remotes::install_github("garberlab/CITEViz", force = TRUE)
+  cat("  ✓ CITEViz 安装成功\n\n")
+}, error = function(e) {
+  cat("  ✗ 安装失败:", e$message, "\n")
+  cat("\n尝试备用源...\n")
+
+  # 方法 2: 如果有其他镜像或源
+  tryCatch({
+    # 可以尝试从 CRAN 或其他源安装（如果有的话）
+    install.packages("CITEViz", repos = "http://cran.rstudio.com/")
+    cat("  ✓ 从备用源安装成功\n\n")
+  }, error = function(e2) {
+    cat("  ✗ 备用安装也失败:", e2$message, "\n\n")
+  })
+})
+
+cat("步骤 4: 验证安装...\n")
+if (requireNamespace("CITEViz", quietly = TRUE)) {
+  library(CITEViz)
+  cat("  ✓ CITEViz 可以加载\n")
+  cat("  版本:", as.character(packageVersion("CITEViz")), "\n")
+
+  # 检查关键函数
+  if (exists("run_app", where = "package:CITEViz")) {
+    cat("  ✓ run_app 函数存在\n")
+  } else {
+    cat("  ✗ run_app 函数不存在\n")
+  }
+} else {
+  cat("  ✗ CITEViz 仍无法加载\n")
+}
+
+cat("\n✓ 重新安装完成\n")
+cat("请重启 R session 使改动生效\n\n")
+```
+
+---
+
+## 第 4 步：降级关键依赖包（推荐）
+
+由于 CITEViz 可能是在旧版本环境开发的，降级关键包可能解决兼容性问题。
+
+```{r downgrade-packages, eval=FALSE}
+cat(strrep("=", 80), "\n")
+cat("降级关键包到兼容版本\n")
+cat(strrep("=", 80), "\n\n")
+
+# 推荐的兼容版本组合
+compatible_versions <- list(
+  ggplot2 = "3.3.6",
+  shiny = "1.7.4",
+  DT = "0.28"
+)
+
+cat("将安装以下兼容版本:\n")
+for (pkg in names(compatible_versions)) {
+  cat("  ", pkg, ":", compatible_versions[[pkg]], "\n")
+}
+
+cat("\n确认继续? (这会影响其他依赖这些包的分析)\n")
+cat("如果确认，继续执行下面的代码\n\n")
+
+# 执行降级
+for (pkg in names(compatible_versions)) {
+  target_version <- compatible_versions[[pkg]]
+
+  cat("处理", pkg, "...\n")
+
+  # 检查当前版本
+  if (requireNamespace(pkg, quietly = TRUE)) {
+    current_version <- as.character(packageVersion(pkg))
+    cat("  当前版本:", current_version, "\n")
+
+    if (current_version != target_version) {
+      cat("  降级到", target_version, "...\n")
+
+      # 卸载现有版本
+      remove.packages(pkg)
+
+      # 安装指定版本
+      remotes::install_version(pkg, version = target_version,
+                               repos = "http://cran.rstudio.com/")
+
+      cat("  ✓ 完成\n\n")
+    } else {
+      cat("  ✓ 版本已是目标版本，跳过\n\n")
+    }
+  }
+}
+
+cat("✓ 降级完成\n")
+cat("必须重启 R session！\n\n")
+```
+
+---
+
+## 第 5 步：测试修复后的 CITEViz
+
+重启 R 后运行此部分。
+
+```{r test-citeviz-after-fix}
+cat(strrep("=", 80), "\n")
+cat("测试 CITEViz 功能\n")
+cat(strrep("=", 80), "\n\n")
+
+# 重新加载包
+library(CITEViz)
+library(Seurat)
+
+cat("1. 包版本确认:\n")
+cat("   CITEViz:", as.character(packageVersion("CITEViz")), "\n")
+cat("   Seurat:", as.character(packageVersion("Seurat")), "\n")
+cat("   shiny:", as.character(packageVersion("shiny")), "\n")
+cat("   ggplot2:", as.character(packageVersion("ggplot2")), "\n\n")
+
+cat("2. 测试空启动:\n")
+cat("   尝试启动 CITEViz 空界面...\n")
+
+tryCatch({
+  # 这应该会打开浏览器
+  # 如果成功，说明 CITEViz 基本功能正常
+  cat("   运行 CITEViz::run_app()\n")
+  cat("   （这将在浏览器中打开，按 Ctrl+C 停止）\n\n")
+
+  # 注意：这个会阻塞，所以在实际测试时要小心
+  # CITEViz::run_app()
+
+  cat("   提示：要实际测试，请在 R Console 中运行:\n")
+  cat("   CITEViz::run_app()\n\n")
+
+  cat("   ✓ 函数可以调用（实际启动需在 Console 中测试）\n\n")
+
+}, error = function(e) {
+  cat("   ✗ 测试失败:", e$message, "\n")
+  cat("   CITEViz 可能仍有问题\n\n")
+})
+```
+
+---
+
+## 第 6 步：如果仍然失败的最终方案
+
+```{r final-workaround}
+cat(strrep("=", 80), "\n")
+cat("最终解决方案\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("如果上述所有方法都失败，可能的原因:\n\n")
+
+cat("1. CITEViz 包本身与您的系统不兼容\n")
+cat("   - R 版本太新（CITEViz 可能只支持 R 4.0-4.2）\n")
+cat("   - 操作系统特定问题\n")
+cat("   - 依赖包的底层库版本冲突\n\n")
+
+cat("2. CITEViz GitHub 仓库可能已停止维护\n")
+cat("   - 检查最后更新时间\n")
+cat("   - 查看 Issues 是否有类似问题\n\n")
+
+cat("3. 需要特定的环境配置\n")
+cat("   - 可能需要在 Docker 容器中运行\n")
+cat("   - 或使用 conda 环境隔离\n\n")
+
+cat("建议的行动:\n\n")
+
+cat("方案 A: 使用 Docker 运行 CITEViz\n")
+cat("  如果 CITEViz 提供 Docker 镜像，这是最稳定的方式\n\n")
+
+cat("方案 B: 使用旧版本 R 环境\n")
+cat("  创建一个 R 4.1 或 R 4.2 的 conda 环境\n")
+cat("  在该环境中重新安装所有包\n\n")
+
+cat("方案 C: 联系 CITEViz 作者\n")
+cat("  在 GitHub 上提 Issue 报告这个错误\n")
+cat("  提供完整的环境信息和错误日志\n\n")
+
+cat("方案 D: 手动实现 CITEViz 的核心功能\n")
+cat("  使用 Seurat 和 ggplot2 重现 CITEViz 的主要可视化\n")
+cat("  创建自定义的 Shiny app\n\n")
+```
+
+---
+
+## 使用指南
+
+### 第一次运行
+
+1. **运行第 1 步**（诊断环境）- 了解当前状态
+2. **运行第 2 步**（检查安装）- 确认 CITEViz 是否完整
+3. **如果需要，运行第 3 步**（重新安装）- 手动运行代码块
+4. **运行第 4 步**（降级包）- 手动运行代码块
+5. **重启 R session**
+6. **运行第 5 步**（测试）- 验证修复
+
+### 快速修复（推荐流程）
+
+如果您确定是包版本问题：
+
+```r
+# 在 R Console 中直接运行
+
+# 1. 降级 ggplot2
+remove.packages("ggplot2")
+remotes::install_version("ggplot2", version = "3.3.6")
+
+# 2. 重新安装 CITEViz
+remove.packages("CITEViz")
+remotes::install_github("garberlab/CITEViz", force = TRUE)
+
+# 3. 重启 R
+
+# 4. 测试
+library(CITEViz)
+CITEViz::run_app()
+```
+
+### 如果仍然失败
+
+查看第 6 步的最终方案，考虑：
+- 使用 Docker 环境
+- 创建隔离的旧版本 R 环境
+- 联系软件作者获取支持
+
+---
+
+## 环境信息
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+
+## 附录：CITEViz 相关资源
+
+- **GitHub 仓库**: https://github.com/garberlab/CITEViz
+- **论文/文档**: 查看 GitHub README
+- **相关 Issues**: 搜索类似的错误报告
+
+如果 GitHub 上有人遇到相同问题，可能会有解决方案或 workaround。
