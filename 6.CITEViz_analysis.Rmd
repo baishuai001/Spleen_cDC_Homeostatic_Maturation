@@ -286,13 +286,82 @@ if ("author_annotation" %in% colnames(seurat_obj@meta.data)) {
 cat("\n")
 ```
 
-## 7. 保存处理后的对象（可选）
+## 7. CITEViz 对象准备
+
+在启动前进行最后的准备和检查。
+
+```{r prepare-for-citeviz}
+cat(strrep("=", 80), "\n")
+cat("CITEViz 对象最终准备\n")
+cat(strrep("=", 80), "\n\n")
+
+# 1. 设置默认 Assay 为 ADT
+cat("1. 设置默认 Assay 为 ADT...\n")
+DefaultAssay(seurat_obj) <- "ADT"
+cat("   ✓ 默认 Assay:", DefaultAssay(seurat_obj), "\n\n")
+
+# 2. 确保有降维结果
+cat("2. 检查降维结果...\n")
+if (length(seurat_obj@reductions) == 0) {
+  cat("   ⚠ 警告：没有降维结果，CITEViz 可能无法绘制散点图\n")
+  cat("   建议先运行 RunUMAP() 或 RunTSNE()\n\n")
+} else {
+  cat("   ✓ 可用的降维:", paste(names(seurat_obj@reductions), collapse = ", "), "\n\n")
+}
+
+# 3. 检查关键元数据
+cat("3. 检查元数据字段...\n")
+meta_fields <- colnames(seurat_obj@meta.data)
+cat("   总共", length(meta_fields), "个元数据字段\n")
+
+# CITEViz 常用的字段
+important_fields <- c("author_annotation", "seurat_clusters", "cell_type", "orig.ident")
+for (field in important_fields) {
+  if (field %in% meta_fields) {
+    cat("   ✓", field, "\n")
+  }
+}
+cat("\n")
+
+# 4. 确保 ADT 数据可访问（使用旧 API）
+cat("4. 测试 ADT 数据访问...\n")
+tryCatch({
+  # 尝试使用 v3/v4 API 访问
+  adt_test <- GetAssayData(seurat_obj, assay = "ADT", slot = "data")
+  cat("   ✓ ADT 数据可访问（v3/v4 API）\n")
+  cat("   行数:", nrow(adt_test), "| 列数:", ncol(adt_test), "\n\n")
+}, error = function(e) {
+  cat("   ⚠ 使用 v3/v4 API 访问失败:", e$message, "\n")
+
+  # 尝试 v5 API
+  tryCatch({
+    adt_test <- GetAssayData(seurat_obj, assay = "ADT", layer = "data")
+    cat("   ✓ ADT 数据可访问（v5 API）\n")
+    cat("   但 CITEViz 可能需要 v3/v4 API\n\n")
+  }, error = function(e2) {
+    cat("   ✗ 两种 API 都失败\n\n")
+  })
+})
+
+# 5. 创建简化版对象（可选，用于调试）
+cat("5. 对象信息摘要:\n")
+cat("   细胞数:", ncol(seurat_obj), "\n")
+cat("   ADT 特征数:", nrow(seurat_obj@assays$ADT), "\n")
+cat("   ADT Assay 类型:", class(seurat_obj@assays$ADT)[1], "\n")
+cat("   默认 Assay:", DefaultAssay(seurat_obj), "\n\n")
+
+cat(strrep("=", 80), "\n")
+cat("✓ 准备完成，可以启动 CITEViz\n")
+cat(strrep("=", 80), "\n\n")
+```
+
+## 8. 保存处理后的对象（可选）
 
 ```{r save-processed}
 # 是否保存处理后的对象
 SAVE_PROCESSED <- TRUE
 
-if (SAVE_PROCESSED && NEEDS_CONVERSION) {
+if (SAVE_PROCESSED) {
   output_dir <- "results/citeviz"
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
@@ -307,7 +376,7 @@ if (SAVE_PROCESSED && NEEDS_CONVERSION) {
 }
 ```
 
-## 8. 启动 CITEViz
+## 9. 启动 CITEViz
 
 ```{r launch-citeviz, eval=FALSE}
 # 注意：这个代码块需要交互式运行，不能在 knit 时执行
@@ -319,20 +388,86 @@ cat(strrep("=", 80), "\n\n")
 cat("CITEViz 将在浏览器中打开\n")
 cat("使用 Ctrl+C 或 ESC 停止\n\n")
 
-# 尝试不同的启动函数
-if (exists("run_app", where = "package:CITEViz")) {
-  cat("使用 run_app() 启动...\n\n")
-  CITEViz::run_app(seurat_obj)
-} else if (exists("launchApp", where = "package:CITEViz")) {
-  cat("使用 launchApp() 启动...\n\n")
-  CITEViz::launchApp(seurat_obj)
-} else if (exists("CITEViz", where = "package:CITEViz")) {
-  cat("使用 CITEViz() 启动...\n\n")
-  CITEViz::CITEViz(seurat_obj)
-} else {
-  cat("✗ 错误：未找到 CITEViz 启动函数\n\n")
-  cat("可用函数:\n")
-  print(ls("package:CITEViz"))
+# 检查可用的启动函数
+cat("检测 CITEViz 启动函数...\n")
+available_functions <- ls("package:CITEViz")
+cat("  可用函数:", paste(head(available_functions, 10), collapse = ", "), "\n\n")
+
+# 尝试不同的启动方法
+launch_success <- FALSE
+
+# 方法 1: run_app (最常用)
+if (!launch_success && exists("run_app", where = "package:CITEViz")) {
+  cat("尝试方法 1: run_app(seurat_obj)...\n")
+  tryCatch({
+    CITEViz::run_app(seurat_obj)
+    launch_success <- TRUE
+  }, error = function(e) {
+    cat("  ✗ 方法 1 失败:", e$message, "\n\n")
+  })
+}
+
+# 方法 2: 传入路径而非对象
+if (!launch_success && exists("run_app", where = "package:CITEViz")) {
+  cat("尝试方法 2: run_app() 空启动（需手动上传文件）...\n")
+  tryCatch({
+    CITEViz::run_app()
+    launch_success <- TRUE
+  }, error = function(e) {
+    cat("  ✗ 方法 2 失败:", e$message, "\n\n")
+  })
+}
+
+# 方法 3: launchApp
+if (!launch_success && exists("launchApp", where = "package:CITEViz")) {
+  cat("尝试方法 3: launchApp(seurat_obj)...\n")
+  tryCatch({
+    CITEViz::launchApp(seurat_obj)
+    launch_success <- TRUE
+  }, error = function(e) {
+    cat("  ✗ 方法 3 失败:", e$message, "\n\n")
+  })
+}
+
+# 方法 4: CITEViz
+if (!launch_success && exists("CITEViz", where = "package:CITEViz")) {
+  cat("尝试方法 4: CITEViz(seurat_obj)...\n")
+  tryCatch({
+    CITEViz::CITEViz(seurat_obj)
+    launch_success <- TRUE
+  }, error = function(e) {
+    cat("  ✗ 方法 4 失败:", e$message, "\n\n")
+  })
+}
+
+# 如果所有方法都失败
+if (!launch_success) {
+  cat(strrep("=", 80), "\n")
+  cat("✗ 所有启动方法都失败\n")
+  cat(strrep("=", 80), "\n\n")
+
+  cat("可能的原因和解决方法:\n\n")
+
+  cat("1. CITEViz 版本不兼容\n")
+  cat("   - 当前 CITEViz 版本:", as.character(packageVersion("CITEViz")), "\n")
+  cat("   - 尝试重新安装: remotes::install_github('https://github.com/garberlab/CITEViz')\n\n")
+
+  cat("2. Seurat 对象结构问题\n")
+  cat("   - 确保 ADT assay 是 v3/v4 格式（不是 Assay5）\n")
+  cat("   - 当前 ADT 类型:", class(seurat_obj@assays$ADT)[1], "\n")
+  cat("   - 如果是 Assay5，重新运行第 4 节的转换代码\n\n")
+
+  cat("3. 缺少必要的元数据或降维结果\n")
+  cat("   - 检查是否有 UMAP:", "wnn.umap" %in% names(seurat_obj@reductions), "\n")
+  cat("   - 检查是否有细胞注释:", "author_annotation" %in% colnames(seurat_obj@meta.data), "\n\n")
+
+  cat("4. 环境依赖问题\n")
+  cat("   - 检查 Shiny 包是否正常: packageVersion('shiny')\n")
+  cat("   - 检查浏览器设置是否阻止了弹出窗口\n\n")
+
+  cat("替代方案:\n")
+  cat("   - 保存对象到文件，然后在 CITEViz 网页中手动上传\n")
+  cat("   - 文件路径: results/citeviz/seurat_obj_citeviz_compatible.rds\n\n")
 }
 ```
 
@@ -340,46 +475,102 @@ if (exists("run_app", where = "package:CITEViz")) {
 
 ## 使用说明
 
-### 在 RStudio 中运行
+### 在 RStudio 中运行（推荐）
 
 1. **打开此文件**：在 RStudio 中打开 `6.CITEViz_analysis.Rmd`
 
-2. **运行前 7 个代码块**：点击每个代码块右上角的绿色箭头，或使用 `Ctrl+Shift+Enter`
+2. **依次运行代码块 1-8**：点击每个代码块右上角的绿色箭头
+   - 第 1 节：加载包
+   - 第 2 节：检测和加载数据
+   - 第 3 节：版本检查
+   - 第 4 节：格式转换
+   - 第 5 节：降采样（可选）
+   - 第 6 节：检查 ADT 数据
+   - 第 7 节：CITEViz 对象准备
+   - 第 8 节：保存对象
 
-3. **交互式启动 CITEViz**：
-   - 在 R Console 中运行：
+3. **启动 CITEViz**：
+
+   **方法 A（推荐）- 在 R Console 直接运行：**
    ```r
+   # 确保 ADT 是默认 assay
+   DefaultAssay(seurat_obj) <- "ADT"
+
+   # 空启动 CITEViz（然后手动上传文件）
+   CITEViz::run_app()
+   ```
+
+   在 CITEViz 网页中点击 "Browse..." 上传：
+   - `results/citeviz/seurat_obj_citeviz_compatible.rds`
+
+   **方法 B - 直接传入对象：**
+   ```r
+   # 这个方法可能遇到初始化错误
    CITEViz::run_app(seurat_obj)
    ```
-   - 或者直接运行第 8 个代码块
 
-### 在 R 命令行中运行
-
-```r
-# 加载文档并运行
-rmarkdown::render('6.CITEViz_analysis.Rmd')
-
-# 然后在 R 中加载对象
-seurat_obj <- readRDS("results/citeviz/seurat_obj_citeviz_compatible.rds")
-
-# 启动 CITEViz
-CITEViz::run_app(seurat_obj)
-```
+   **方法 C - 运行第 9 节代码块（会尝试多种方法）**
 
 ### 故障排查
 
-**如果遇到 `[object Object]` 错误：**
-- 确保已运行格式转换步骤（第 4 节）
-- 检查所有 Assay 都已转换为 v3/v4 格式（不是 Assay5）
+#### 错误 1: `attempt to apply non-function`
 
-**如果 CITEViz 加载缓慢：**
-- 减少 `MAX_CELLS` 参数（例如改为 5000）
-- 重新运行降采样步骤（第 5 节）
+**原因：** CITEViz 内部初始化失败
 
-**如果找不到输入文件：**
-- 检查 `possible_input_files` 列表（第 2 节）
-- 添加您的文件实际路径
-- 确保文件名为 `seurat_obj_annotated.rds`
+**解决方法：**
+1. 使用空启动 + 手动上传文件（方法 A）
+2. 检查 CITEViz 版本和依赖：
+   ```r
+   packageVersion("CITEViz")
+   packageVersion("shiny")
+   ```
+3. 尝试重新安装 CITEViz：
+   ```r
+   remotes::install_github('garberlab/CITEViz', force = TRUE)
+   ```
+
+#### 错误 2: `[object Object]`
+
+**原因：** ADT assay 仍是 Assay5 格式
+
+**解决方法：**
+- 重新运行第 4 节的转换代码
+- 检查转换结果确保 ADT 是 `Assay` 类型
+
+#### 错误 3: CITEViz 加载缓慢或卡死
+
+**原因：** 细胞数太多
+
+**解决方法：**
+- 在第 5 节修改 `MAX_CELLS <- 5000`（减少到 5000 细胞）
+- 重新运行第 5-8 节
+
+#### 错误 4: 找不到输入文件
+
+**解决方法：**
+- 检查文件是否存在：
+  ```r
+  file.exists("06_CITEViz/results/integrated/Robjects/seurat_obj_annotated.rds")
+  ```
+- 修改第 2 节的 `possible_input_files` 列表添加您的实际路径
+
+### 备用方案
+
+如果 CITEViz 持续失败，可以直接在 R 中进行 ADT 分析：
+
+```r
+# 设置默认 assay
+DefaultAssay(seurat_obj) <- "ADT"
+
+# 可视化 ADT 特征
+FeaturePlot(seurat_obj, features = c("adt-CD11c", "adt-CD317"))
+
+# ADT 表达热图
+DoHeatmap(seurat_obj, features = rownames(seurat_obj@assays$ADT)[1:20])
+
+# ADT 点图
+DotPlot(seurat_obj, features = rownames(seurat_obj@assays$ADT))
+```
 
 ---
 
