@@ -1,0 +1,363 @@
+---
+title: "CITEViz ADT 交互式分析"
+author: "cDC Maturation Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    code_folding: hide
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 8
+)
+```
+
+# CITEViz 交互式 ADT 分析
+
+本文档用于启动 CITEViz 进行 CITE-seq ADT（抗体）数据的交互式分析。
+
+## 1. 加载必需的包
+
+```{r load-libraries}
+library(Seurat)
+library(SeuratObject)
+library(CITEViz)
+
+cat("Seurat 版本:", as.character(packageVersion("Seurat")), "\n")
+cat("CITEViz 版本:", as.character(packageVersion("CITEViz")), "\n")
+```
+
+## 2. 检测和加载 Seurat 对象
+
+```{r detect-input-file}
+# 自动检测可用的 Seurat 对象文件
+possible_input_files <- c(
+  # 根据截图，优先查找这个路径
+  "06_CITEViz/results/integrated/Robjects/seurat_obj_annotated.rds",
+
+  # 其他可能的位置
+  "results/integrated/Robjects/seurat_obj_annotated.rds",
+  "results/integrated/Robjects/seurat_obj_for_annotation.rds",
+  "results/cDC1/Robjects/seurat_obj_annotated.rds",
+  "results/cDC2/Robjects/seurat_obj_annotated.rds",
+  "seurat_obj_annotated.rds"
+)
+
+cat("\n", strrep("=", 80), "\n")
+cat("检测 Seurat 对象文件\n")
+cat(strrep("=", 80), "\n\n")
+
+INPUT_FILE <- NULL
+for (file_path in possible_input_files) {
+  if (file.exists(file_path)) {
+    INPUT_FILE <- file_path
+    file_size <- file.size(file_path) / 1024^2  # MB
+    cat("✓ 找到文件:", file_path, sprintf("(%.1f MB)", file_size), "\n")
+    break
+  }
+}
+
+if (is.null(INPUT_FILE)) {
+  cat("✗ 未找到 Seurat 对象文件\n\n")
+  cat("查找的位置:\n")
+  for (file_path in possible_input_files) {
+    cat("  -", file_path, "\n")
+  }
+  stop("\n请确保 Seurat 对象文件存在于上述位置之一")
+}
+
+cat("\n加载 Seurat 对象...\n")
+seurat_obj <- readRDS(INPUT_FILE)
+
+cat("  细胞数:", ncol(seurat_obj), "\n")
+cat("  基因数:", nrow(seurat_obj), "\n")
+cat("  Assay:", paste(names(seurat_obj@assays), collapse = ", "), "\n")
+```
+
+## 3. 检查 Seurat 版本兼容性
+
+```{r check-compatibility}
+cat("\n", strrep("=", 80), "\n")
+cat("Seurat 版本兼容性检查\n")
+cat(strrep("=", 80), "\n\n")
+
+seurat_version <- packageVersion("Seurat")
+cat("当前 Seurat 版本:", as.character(seurat_version), "\n\n")
+
+# 检查 Assay 类型
+cat("Assay 类型检查:\n")
+for (assay_name in names(seurat_obj@assays)) {
+  assay_class <- class(seurat_obj@assays[[assay_name]])[1]
+  is_v5 <- assay_class == "Assay5"
+
+  status <- if (is_v5) "⚠ Assay5 (需要转换)" else "✓ Assay (兼容)"
+  cat("  ", assay_name, ":", assay_class, "-", status, "\n")
+}
+
+cat("\n")
+```
+
+## 4. 格式转换（Seurat v5 → v4）
+
+仅当检测到 Assay5 时执行转换。
+
+```{r convert-format}
+NEEDS_CONVERSION <- FALSE
+
+# 检查是否需要转换
+for (assay_name in names(seurat_obj@assays)) {
+  if (inherits(seurat_obj@assays[[assay_name]], "Assay5")) {
+    NEEDS_CONVERSION <- TRUE
+    break
+  }
+}
+
+if (NEEDS_CONVERSION) {
+  cat(strrep("=", 80), "\n")
+  cat("执行格式转换（Assay5 → Assay）\n")
+  cat(strrep("=", 80), "\n\n")
+
+  for (assay_name in names(seurat_obj@assays)) {
+    current_assay <- seurat_obj@assays[[assay_name]]
+
+    if (inherits(current_assay, "Assay5")) {
+      cat("转换", assay_name, "...\n")
+
+      tryCatch({
+        # 方法 1: 使用 as() 强制转换
+        seurat_obj@assays[[assay_name]] <- as(current_assay, "Assay")
+        cat("  ✓ 转换成功\n")
+      }, error = function(e) {
+        cat("  ⚠ 方法 1 失败，尝试备用方法...\n")
+
+        # 方法 2: 手动重建
+        tryCatch({
+          counts <- LayerData(current_assay, layer = "counts")
+          data <- LayerData(current_assay, layer = "data")
+
+          new_assay <- CreateAssayObject(counts = counts)
+          new_assay <- SetAssayData(new_assay, slot = "data", new.data = data)
+
+          # 如果有 scale.data
+          if ("scale.data" %in% names(current_assay@layers)) {
+            scale_data <- LayerData(current_assay, layer = "scale.data")
+            new_assay <- SetAssayData(new_assay, slot = "scale.data", new.data = scale_data)
+          }
+
+          seurat_obj@assays[[assay_name]] <- new_assay
+          cat("  ✓ 备用方法成功\n")
+        }, error = function(e2) {
+          cat("  ✗ 转换失败:", e2$message, "\n")
+          cat("  保留原始 Assay（可能导致 CITEViz 无法使用）\n")
+        })
+      })
+    } else {
+      cat(assay_name, "已是 v3/v4 格式，跳过\n")
+    }
+  }
+
+  cat("\n转换完成\n\n")
+
+  # 验证转换结果
+  cat("转换后的 Assay 类型:\n")
+  for (assay_name in names(seurat_obj@assays)) {
+    assay_class <- class(seurat_obj@assays[[assay_name]])[1]
+    status <- if (assay_class == "Assay5") "✗ 仍是 Assay5" else "✓ 已转换"
+    cat("  ", assay_name, ":", assay_class, "-", status, "\n")
+  }
+
+} else {
+  cat("✓ 所有 Assay 已是 v3/v4 格式，无需转换\n")
+}
+
+cat("\n")
+```
+
+## 5. 降采样（可选，加快加载速度）
+
+```{r downsample}
+# 配置参数
+DOWNSAMPLE <- TRUE
+MAX_CELLS <- 10000
+
+if (DOWNSAMPLE && ncol(seurat_obj) > MAX_CELLS) {
+  cat(strrep("=", 80), "\n")
+  cat("降采样细胞\n")
+  cat(strrep("=", 80), "\n\n")
+
+  cat("原始细胞数:", ncol(seurat_obj), "\n")
+  cat("目标细胞数:", MAX_CELLS, "\n")
+
+  set.seed(42)
+  sampled_cells <- sample(colnames(seurat_obj), MAX_CELLS)
+  seurat_obj <- seurat_obj[, sampled_cells]
+
+  cat("✓ 降采样完成，当前细胞数:", ncol(seurat_obj), "\n\n")
+} else if (DOWNSAMPLE) {
+  cat("细胞数未超过阈值 (", MAX_CELLS, ")，无需降采样\n\n")
+} else {
+  cat("降采样已禁用\n\n")
+}
+```
+
+## 6. 检查 ADT 数据
+
+```{r check-adt}
+cat(strrep("=", 80), "\n")
+cat("ADT 数据检查\n")
+cat(strrep("=", 80), "\n\n")
+
+if (!"ADT" %in% names(seurat_obj@assays)) {
+  stop("✗ 错误：此 Seurat 对象没有 ADT 数据\n",
+       "可用的 Assay: ", paste(names(seurat_obj@assays), collapse = ", "))
+}
+
+cat("✓ ADT assay 存在\n")
+
+# 获取 ADT 特征数
+adt_features <- rownames(seurat_obj@assays$ADT)
+cat("  ADT 特征数:", length(adt_features), "\n")
+cat("  前 10 个 ADT:\n")
+cat("   ", paste(head(adt_features, 10), collapse = ", "), "\n")
+
+if (length(adt_features) > 10) {
+  cat("    ... 还有", length(adt_features) - 10, "个\n")
+}
+
+cat("\n")
+
+# 检查降维结果
+cat("降维结果:\n")
+if (length(seurat_obj@reductions) > 0) {
+  for (reduction_name in names(seurat_obj@reductions)) {
+    cat("  ✓", reduction_name, "\n")
+  }
+} else {
+  cat("  ⚠ 未找到降维结果\n")
+}
+
+cat("\n")
+
+# 检查细胞注释
+if ("author_annotation" %in% colnames(seurat_obj@meta.data)) {
+  cell_types <- table(seurat_obj$author_annotation)
+  cat("细胞类型分布:\n")
+  for (ct in names(cell_types)) {
+    cat("  ", ct, ":", cell_types[ct], "\n")
+  }
+}
+
+cat("\n")
+```
+
+## 7. 保存处理后的对象（可选）
+
+```{r save-processed}
+# 是否保存处理后的对象
+SAVE_PROCESSED <- TRUE
+
+if (SAVE_PROCESSED && NEEDS_CONVERSION) {
+  output_dir <- "results/citeviz"
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+  output_file <- file.path(output_dir, "seurat_obj_citeviz_compatible.rds")
+
+  cat("保存处理后的对象...\n")
+  cat("  输出:", output_file, "\n")
+
+  saveRDS(seurat_obj, output_file)
+
+  cat("  ✓ 保存成功\n\n")
+}
+```
+
+## 8. 启动 CITEViz
+
+```{r launch-citeviz, eval=FALSE}
+# 注意：这个代码块需要交互式运行，不能在 knit 时执行
+
+cat(strrep("=", 80), "\n")
+cat("启动 CITEViz\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("CITEViz 将在浏览器中打开\n")
+cat("使用 Ctrl+C 或 ESC 停止\n\n")
+
+# 尝试不同的启动函数
+if (exists("run_app", where = "package:CITEViz")) {
+  cat("使用 run_app() 启动...\n\n")
+  CITEViz::run_app(seurat_obj)
+} else if (exists("launchApp", where = "package:CITEViz")) {
+  cat("使用 launchApp() 启动...\n\n")
+  CITEViz::launchApp(seurat_obj)
+} else if (exists("CITEViz", where = "package:CITEViz")) {
+  cat("使用 CITEViz() 启动...\n\n")
+  CITEViz::CITEViz(seurat_obj)
+} else {
+  cat("✗ 错误：未找到 CITEViz 启动函数\n\n")
+  cat("可用函数:\n")
+  print(ls("package:CITEViz"))
+}
+```
+
+---
+
+## 使用说明
+
+### 在 RStudio 中运行
+
+1. **打开此文件**：在 RStudio 中打开 `6.CITEViz_analysis.Rmd`
+
+2. **运行前 7 个代码块**：点击每个代码块右上角的绿色箭头，或使用 `Ctrl+Shift+Enter`
+
+3. **交互式启动 CITEViz**：
+   - 在 R Console 中运行：
+   ```r
+   CITEViz::run_app(seurat_obj)
+   ```
+   - 或者直接运行第 8 个代码块
+
+### 在 R 命令行中运行
+
+```r
+# 加载文档并运行
+rmarkdown::render('6.CITEViz_analysis.Rmd')
+
+# 然后在 R 中加载对象
+seurat_obj <- readRDS("results/citeviz/seurat_obj_citeviz_compatible.rds")
+
+# 启动 CITEViz
+CITEViz::run_app(seurat_obj)
+```
+
+### 故障排查
+
+**如果遇到 `[object Object]` 错误：**
+- 确保已运行格式转换步骤（第 4 节）
+- 检查所有 Assay 都已转换为 v3/v4 格式（不是 Assay5）
+
+**如果 CITEViz 加载缓慢：**
+- 减少 `MAX_CELLS` 参数（例如改为 5000）
+- 重新运行降采样步骤（第 5 节）
+
+**如果找不到输入文件：**
+- 检查 `possible_input_files` 列表（第 2 节）
+- 添加您的文件实际路径
+- 确保文件名为 `seurat_obj_annotated.rds`
+
+---
+
+## 会话信息
+
+```{r session-info}
+sessionInfo()
+```
