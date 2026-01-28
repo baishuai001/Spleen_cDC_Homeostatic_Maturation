@@ -1,0 +1,398 @@
+---
+title: "ggplot2 降级修复（CITEViz 兼容）"
+author: "cDC Maturation Analysis"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# ggplot2 降级到 3.3.6（CITEViz 兼容版本）
+
+**问题：** 从 CRAN 下载失败
+
+**原因：** 网络问题或镜像源不可用
+
+**解决方案：** 尝试多个下载源和方法
+
+---
+
+## 方法 1：使用不同的 CRAN 镜像
+
+```{r method1-mirror, eval=FALSE}
+cat("方法 1: 尝试多个 CRAN 镜像\n")
+cat(strrep("=", 80), "\n\n")
+
+# 卸载当前版本
+if ("ggplot2" %in% installed.packages()[,"Package"]) {
+  cat("卸载当前 ggplot2 版本...\n")
+  remove.packages("ggplot2")
+  cat("  ✓ 已卸载\n\n")
+}
+
+# 多个镜像源
+mirrors <- c(
+  "https://cran.r-project.org",
+  "https://cloud.r-project.org",
+  "https://mirrors.tuna.tsinghua.edu.cn/CRAN",  # 清华镜像
+  "https://mirrors.ustc.edu.cn/CRAN",           # 中科大镜像
+  "http://cran.us.r-project.org"
+)
+
+success <- FALSE
+
+for (mirror in mirrors) {
+  cat("尝试镜像:", mirror, "\n")
+
+  tryCatch({
+    remotes::install_version("ggplot2",
+                             version = "3.3.6",
+                             repos = mirror,
+                             upgrade = "never")
+
+    # 验证安装
+    if (requireNamespace("ggplot2", quietly = TRUE)) {
+      installed_version <- as.character(packageVersion("ggplot2"))
+      if (installed_version == "3.3.6") {
+        cat("  ✓ 成功从", mirror, "安装 ggplot2 3.3.6\n\n")
+        success <- TRUE
+        break
+      }
+    }
+  }, error = function(e) {
+    cat("  ✗ 失败:", e$message, "\n\n")
+  })
+}
+
+if (success) {
+  cat(strrep("=", 80), "\n")
+  cat("✓ ggplot2 3.3.6 安装成功\n")
+  cat(strrep("=", 80), "\n\n")
+} else {
+  cat(strrep("=", 80), "\n")
+  cat("✗ 方法 1 失败，请尝试方法 2\n")
+  cat(strrep("=", 80), "\n\n")
+}
+```
+
+---
+
+## 方法 2：使用二进制包（Windows/Mac）
+
+```{r method2-binary, eval=FALSE}
+cat("方法 2: 使用预编译的二进制包\n")
+cat(strrep("=", 80), "\n\n")
+
+# 卸载当前版本
+if ("ggplot2" %in% installed.packages()[,"Package"]) {
+  remove.packages("ggplot2")
+}
+
+# 根据操作系统选择二进制包
+os_type <- .Platform$OS.type
+cat("操作系统:", os_type, "\n\n")
+
+if (os_type == "windows") {
+  cat("使用 Windows 二进制包\n")
+  install.packages("ggplot2",
+                   repos = "https://cloud.r-project.org",
+                   type = "win.binary",
+                   dependencies = TRUE)
+} else if (Sys.info()["sysname"] == "Darwin") {
+  cat("使用 Mac 二进制包\n")
+  install.packages("ggplot2",
+                   repos = "https://cloud.r-project.org",
+                   type = "mac.binary",
+                   dependencies = TRUE)
+} else {
+  cat("Linux 系统，使用源码安装\n")
+  # Linux 上尝试从源码编译
+  install.packages("ggplot2",
+                   repos = "https://cloud.r-project.org",
+                   type = "source")
+}
+
+# 验证
+if (requireNamespace("ggplot2", quietly = TRUE)) {
+  cat("\n✓ ggplot2 安装成功\n")
+  cat("  版本:", as.character(packageVersion("ggplot2")), "\n")
+} else {
+  cat("\n✗ 安装失败\n")
+}
+```
+
+---
+
+## 方法 3：从 GitHub 安装特定版本
+
+```{r method3-github, eval=FALSE}
+cat("方法 3: 从 GitHub 安装 ggplot2 3.3.6\n")
+cat(strrep("=", 80), "\n\n")
+
+# 卸载当前版本
+if ("ggplot2" %in% installed.packages()[,"Package"]) {
+  remove.packages("ggplot2")
+}
+
+# 从 GitHub 安装特定 tag/版本
+tryCatch({
+  if (!requireNamespace("remotes", quietly = TRUE)) {
+    install.packages("remotes")
+  }
+
+  # ggplot2 3.3.6 对应的 GitHub tag 是 v3.3.6
+  remotes::install_github("tidyverse/ggplot2@v3.3.6",
+                          upgrade = "never")
+
+  # 验证
+  if (requireNamespace("ggplot2", quietly = TRUE)) {
+    installed_version <- as.character(packageVersion("ggplot2"))
+    cat("\n✓ 安装成功\n")
+    cat("  版本:", installed_version, "\n")
+
+    if (installed_version == "3.3.6") {
+      cat("  ✓ 版本正确\n")
+    } else {
+      cat("  ⚠ 版本不是 3.3.6，但可能也兼容\n")
+    }
+  }
+}, error = function(e) {
+  cat("\n✗ 安装失败:", e$message, "\n")
+})
+```
+
+---
+
+## 方法 4：保持当前版本，修改 CITEViz 使用方式
+
+如果降级持续失败，可以尝试在当前 ggplot2 版本下使用 CITEViz：
+
+```{r method4-workaround, eval=FALSE}
+cat("方法 4: 不降级 ggplot2，使用兼容性设置\n")
+cat(strrep("=", 80), "\n\n")
+
+library(ggplot2)
+library(Seurat)
+
+cat("当前 ggplot2 版本:", as.character(packageVersion("ggplot2")), "\n\n")
+
+# 设置 ggplot2 选项为旧版行为
+cat("设置兼容选项...\n")
+
+options(
+  ggplot2.continuous.colour = "gradient",
+  ggplot2.continuous.fill = "gradient",
+  ggplot2.discrete.colour = NULL,
+  ggplot2.discrete.fill = NULL
+)
+
+# 使用简单主题
+ggplot2::theme_set(ggplot2::theme_bw(base_size = 12))
+
+cat("  ✓ 已设置\n\n")
+
+cat("测试绘图...\n")
+test_data <- data.frame(x = rnorm(100), y = rnorm(100), group = rep(c("A", "B"), 50))
+
+tryCatch({
+  p <- ggplot(test_data, aes(x = x, y = y, color = group)) +
+    geom_point() +
+    theme_bw()
+  print(p)
+  cat("  ✓ 绘图正常\n\n")
+}, error = function(e) {
+  cat("  ✗ 绘图失败:", e$message, "\n\n")
+})
+
+cat("现在尝试启动 CITEViz:\n")
+cat("  library(CITEViz)\n")
+cat("  CITEViz::run_app()\n\n")
+```
+
+---
+
+## 方法 5：手动下载并安装
+
+如果网络连接有问题，可以手动下载包：
+
+```{r method5-manual, eval=FALSE}
+cat("方法 5: 手动下载并安装\n")
+cat(strrep("=", 80), "\n\n")
+
+# 创建临时目录
+temp_dir <- tempdir()
+cat("临时目录:", temp_dir, "\n\n")
+
+# 包的 URL（多个备用源）
+pkg_urls <- c(
+  "https://cran.r-project.org/src/contrib/Archive/ggplot2/ggplot2_3.3.6.tar.gz",
+  "https://cloud.r-project.org/src/contrib/Archive/ggplot2/ggplot2_3.3.6.tar.gz",
+  "https://mirrors.tuna.tsinghua.edu.cn/CRAN/src/contrib/Archive/ggplot2/ggplot2_3.3.6.tar.gz"
+)
+
+pkg_file <- file.path(temp_dir, "ggplot2_3.3.6.tar.gz")
+
+download_success <- FALSE
+
+for (url in pkg_urls) {
+  cat("尝试下载:", url, "\n")
+
+  tryCatch({
+    download.file(url, pkg_file, method = "auto", quiet = FALSE)
+
+    if (file.exists(pkg_file)) {
+      cat("  ✓ 下载成功\n\n")
+      download_success <- TRUE
+      break
+    }
+  }, error = function(e) {
+    cat("  ✗ 下载失败:", e$message, "\n\n")
+  })
+}
+
+if (download_success) {
+  cat("安装下载的包...\n")
+
+  # 卸载旧版本
+  if ("ggplot2" %in% installed.packages()[,"Package"]) {
+    remove.packages("ggplot2")
+  }
+
+  # 从本地文件安装
+  install.packages(pkg_file, repos = NULL, type = "source")
+
+  # 验证
+  if (requireNamespace("ggplot2", quietly = TRUE)) {
+    cat("\n✓ 安装成功\n")
+    cat("  版本:", as.character(packageVersion("ggplot2")), "\n")
+  }
+
+  # 清理
+  unlink(pkg_file)
+} else {
+  cat("✗ 所有下载源都失败\n")
+  cat("建议：检查网络连接或使用其他方法\n\n")
+}
+```
+
+---
+
+## 验证安装
+
+运行此代码块验证 ggplot2 是否可用：
+
+```{r verify-installation}
+cat(strrep("=", 80), "\n")
+cat("验证 ggplot2 安装\n")
+cat(strrep("=", 80), "\n\n")
+
+if (requireNamespace("ggplot2", quietly = TRUE)) {
+  library(ggplot2)
+
+  cat("✓ ggplot2 已安装\n")
+  cat("  版本:", as.character(packageVersion("ggplot2")), "\n\n")
+
+  # 测试基本功能
+  cat("测试基本绘图功能...\n")
+
+  test_data <- data.frame(
+    x = rnorm(100),
+    y = rnorm(100),
+    group = rep(c("A", "B"), each = 50)
+  )
+
+  tryCatch({
+    p <- ggplot(test_data, aes(x = x, y = y, color = group)) +
+      geom_point() +
+      scale_color_manual(values = c("A" = "red", "B" = "blue")) +
+      theme_minimal()
+
+    print(p)
+
+    cat("\n✓ ggplot2 功能正常\n\n")
+
+    # 检查版本兼容性
+    ggplot2_version <- packageVersion("ggplot2")
+
+    if (ggplot2_version == "3.3.6") {
+      cat("✓ 版本正确（3.3.6），应该与 CITEViz 兼容\n")
+    } else if (ggplot2_version < "3.4.0") {
+      cat("✓ 版本 < 3.4.0，可能与 CITEViz 兼容\n")
+    } else {
+      cat("⚠ 版本 >= 3.4.0，可能需要使用兼容性设置\n")
+      cat("  运行方法 4 的兼容性设置代码\n")
+    }
+
+  }, error = function(e) {
+    cat("\n✗ ggplot2 功能异常:", e$message, "\n")
+  })
+
+} else {
+  cat("✗ ggplot2 未安装或无法加载\n")
+}
+```
+
+---
+
+## 推荐流程
+
+根据您的情况选择：
+
+### 如果您在中国大陆
+
+**推荐：方法 1（使用清华或中科大镜像）**
+
+运行方法 1 代码块，它会自动尝试多个镜像。
+
+### 如果您使用 Windows 或 Mac
+
+**推荐：方法 2（使用二进制包）**
+
+二进制包安装更快，不需要编译。
+
+### 如果网络连接不稳定
+
+**推荐：方法 4（保持当前版本 + 兼容性设置）**
+
+不需要下载，直接使用当前版本但配置兼容选项。
+
+### 如果以上都失败
+
+**推荐：方法 3（从 GitHub 安装）**
+
+或联系系统管理员检查网络/防火墙设置。
+
+---
+
+## 完成后的步骤
+
+降级成功后：
+
+1. **重启 R session**（重要！）
+   - 菜单：Session → Restart R
+
+2. **验证版本**
+   ```r
+   packageVersion("ggplot2")
+   # 应该显示 [1] '3.3.6'
+   ```
+
+3. **返回 CITEViz 分析**
+   - 打开 `6.CITEViz_analysis.Rmd`
+   - 从第 1 节开始运行
+
+4. **测试 CITEViz**
+   ```r
+   library(CITEViz)
+   CITEViz::run_app()
+   ```
+
+---
+
+## 会话信息
+
+```{r session-info}
+sessionInfo()
+```
