@@ -132,18 +132,28 @@ if (NEEDS_CONVERSION) {
     if (inherits(current_assay, "Assay5")) {
       cat("转换", assay_name, "...\n")
 
+      # 方法 1: 使用 as() 强制转换
+      method1_success <- FALSE
       tryCatch({
-        # 方法 1: 使用 as() 强制转换
-        seurat_obj@assays[[assay_name]] <- as(current_assay, "Assay")
-        cat("  ✓ 转换成功\n")
+        new_assay <- as(current_assay, "Assay")
+        seurat_obj@assays[[assay_name]] <- new_assay
+        method1_success <- TRUE
+        cat("  ✓ 方法 1 成功\n")
       }, error = function(e) {
-        cat("  ⚠ 方法 1 失败，尝试备用方法...\n")
+        cat("  ⚠ 方法 1 失败:", e$message, "\n")
+      })
 
-        # 方法 2: 手动重建
+      # 如果方法 1 失败，尝试方法 2
+      if (!method1_success) {
+        cat("  尝试备用方法（手动重建）...\n")
+
+        method2_success <- FALSE
         tryCatch({
+          # 提取所有层的数据
           counts <- LayerData(current_assay, layer = "counts")
           data <- LayerData(current_assay, layer = "data")
 
+          # 创建新的 v3/v4 Assay
           new_assay <- CreateAssayObject(counts = counts)
           new_assay <- SetAssayData(new_assay, slot = "data", new.data = data)
 
@@ -153,13 +163,20 @@ if (NEEDS_CONVERSION) {
             new_assay <- SetAssayData(new_assay, slot = "scale.data", new.data = scale_data)
           }
 
+          # 赋值回去
           seurat_obj@assays[[assay_name]] <- new_assay
-          cat("  ✓ 备用方法成功\n")
+          method2_success <- TRUE
+          cat("  ✓ 方法 2 成功\n")
         }, error = function(e2) {
-          cat("  ✗ 转换失败:", e2$message, "\n")
-          cat("  保留原始 Assay（可能导致 CITEViz 无法使用）\n")
+          cat("  ✗ 方法 2 也失败:", e2$message, "\n")
         })
-      })
+
+        if (!method2_success) {
+          cat("  ⚠ 所有转换方法都失败，保留原始 Assay5\n")
+          cat("  注意：这可能导致 CITEViz 对此 Assay 的功能受限\n")
+        }
+      }
+
     } else {
       cat(assay_name, "已是 v3/v4 格式，跳过\n")
     }
@@ -171,8 +188,18 @@ if (NEEDS_CONVERSION) {
   cat("转换后的 Assay 类型:\n")
   for (assay_name in names(seurat_obj@assays)) {
     assay_class <- class(seurat_obj@assays[[assay_name]])[1]
-    status <- if (assay_class == "Assay5") "✗ 仍是 Assay5" else "✓ 已转换"
+    status <- if (assay_class == "Assay5") "✗ 仍是 Assay5（转换失败）" else "✓ 已转换"
     cat("  ", assay_name, ":", assay_class, "-", status, "\n")
+  }
+
+  cat("\n")
+
+  # CITEViz 主要关注 ADT 数据
+  if (inherits(seurat_obj@assays[["ADT"]], "Assay")) {
+    cat("✓ 重要：ADT assay 已是 v3/v4 格式，CITEViz 应该可以正常工作\n")
+    cat("  （RNA assay 的格式对 CITEViz 影响较小）\n")
+  } else if (inherits(seurat_obj@assays[["ADT"]], "Assay5")) {
+    cat("⚠ 警告：ADT assay 仍是 Assay5 格式，CITEViz 可能无法正常工作\n")
   }
 
 } else {
