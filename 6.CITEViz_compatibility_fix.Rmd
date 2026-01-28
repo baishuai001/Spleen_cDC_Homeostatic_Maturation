@@ -1,0 +1,407 @@
+---
+title: "CITEViz 兼容性修复"
+author: "cDC Maturation Analysis"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+# CITEViz ggplot2 兼容性修复
+
+本文档用于修复 CITEViz 与新版本 ggplot2 的兼容性问题。
+
+**错误症状：** `Error: argument "..4" is missing, with no default`
+
+**原因：** CITEViz 是基于旧版 ggplot2 开发的，新版本改变了内部参数结构。
+
+---
+
+## 1. 检查当前版本
+
+```{r check-versions}
+cat("当前包版本:\n")
+cat("  Seurat:", as.character(packageVersion("Seurat")), "\n")
+cat("  ggplot2:", as.character(packageVersion("ggplot2")), "\n")
+cat("  CITEViz:", as.character(packageVersion("CITEViz")), "\n")
+cat("  shiny:", as.character(packageVersion("shiny")), "\n")
+cat("\n")
+
+# 检查是否需要降级
+ggplot2_version <- packageVersion("ggplot2")
+if (ggplot2_version >= "3.4.0") {
+  cat("⚠ 警告: ggplot2 版本 >= 3.4.0 可能与 CITEViz 不兼容\n")
+  cat("  推荐版本: 3.3.6\n\n")
+  NEEDS_DOWNGRADE <- TRUE
+} else {
+  cat("✓ ggplot2 版本应该兼容\n\n")
+  NEEDS_DOWNGRADE <- FALSE
+}
+```
+
+## 2. 修复方法选择
+
+```{r choose-fix-method}
+cat(strrep("=", 80), "\n")
+cat("选择修复方法\n")
+cat(strrep("=", 80), "\n\n")
+
+cat("方法 1: 降级 ggplot2 (推荐)\n")
+cat("  优点: 最彻底的解决方案\n")
+cat("  缺点: 可能影响其他依赖新版 ggplot2 的包\n\n")
+
+cat("方法 2: 修补 CITEViz 内部函数\n")
+cat("  优点: 不影响其他包\n")
+cat("  缺点: 需要手动修改函数，可能不完全\n\n")
+
+cat("方法 3: 使用 CITEViz 的简化模式\n")
+cat("  优点: 避开有问题的功能\n")
+cat("  缺点: 功能受限\n\n")
+
+# 默认选择
+FIX_METHOD <- 2  # 默认使用方法 2（修补函数）
+
+cat("当前选择: 方法", FIX_METHOD, "\n")
+cat("（可以修改上面的 FIX_METHOD 变量来选择其他方法）\n\n")
+```
+
+---
+
+## 方法 1: 降级 ggplot2
+
+```{r downgrade-ggplot2, eval=FALSE}
+# 警告：这会影响所有依赖 ggplot2 的包
+# 请在独立的 R 环境或 conda 环境中执行
+
+cat("降级 ggplot2 到 3.3.6...\n")
+
+# 移除当前版本
+remove.packages("ggplot2")
+
+# 安装旧版本
+remotes::install_version("ggplot2", version = "3.3.6", repos = "http://cran.us.r-project.org")
+
+cat("✓ ggplot2 已降级\n")
+cat("  请重启 R session 使改动生效\n\n")
+```
+
+---
+
+## 方法 2: 修补 CITEViz 内部函数（推荐）
+
+```{r patch-citeviz-functions}
+if (FIX_METHOD == 2) {
+  cat(strrep("=", 80), "\n")
+  cat("修补 CITEViz 内部函数\n")
+  cat(strrep("=", 80), "\n\n")
+
+  library(CITEViz)
+
+  # 检查 CITEViz 命名空间
+  citeviz_functions <- ls("package:CITEViz")
+  cat("CITEViz 导出的函数:\n")
+  cat(" ", paste(citeviz_functions, collapse = ", "), "\n\n")
+
+  # 创建修补的启动函数
+  cat("创建修补版本的启动函数...\n")
+
+  # 修补函数：安全的 CITEViz 启动
+  run_app_patched <- function(seurat_obj = NULL, ...) {
+    cat("使用修补版本的 CITEViz 启动器\n\n")
+
+    # 如果传入了 Seurat 对象，先保存到临时文件
+    if (!is.null(seurat_obj)) {
+      cat("准备 Seurat 对象...\n")
+
+      # 确保使用旧版 ggplot2 绘图参数
+      old_theme <- ggplot2::theme_get()
+      ggplot2::theme_set(ggplot2::theme_bw())
+
+      # 设置环境变量以使用旧版行为
+      options(ggplot2.continuous.colour = "gradient")
+      options(ggplot2.continuous.fill = "gradient")
+
+      cat("  ✓ 已设置 ggplot2 兼容模式\n\n")
+    }
+
+    # 尝试启动 CITEViz
+    tryCatch({
+      if (!is.null(seurat_obj)) {
+        # 有对象：尝试传入
+        CITEViz::run_app(seurat_obj, ...)
+      } else {
+        # 无对象：空启动
+        CITEViz::run_app(...)
+      }
+    }, error = function(e) {
+      cat("✗ 启动失败:", e$message, "\n\n")
+
+      # 提供备用方案
+      if (!is.null(seurat_obj)) {
+        cat("尝试备用方案：保存对象并空启动\n")
+
+        temp_dir <- "results/citeviz"
+        dir.create(temp_dir, recursive = TRUE, showWarnings = FALSE)
+        temp_file <- file.path(temp_dir, "temp_citeviz_object.rds")
+
+        cat("  保存到:", temp_file, "\n")
+        saveRDS(seurat_obj, temp_file)
+
+        cat("  启动 CITEViz 空界面...\n")
+        cat("  请在网页中手动上传文件:", temp_file, "\n\n")
+
+        CITEViz::run_app()
+      } else {
+        stop("无法启动 CITEViz")
+      }
+    })
+  }
+
+  cat("✓ 修补函数已创建\n")
+  cat("  使用方法: run_app_patched(seurat_obj)\n\n")
+
+  # 将函数注册到全局环境
+  assign("run_app_patched", run_app_patched, envir = .GlobalEnv)
+}
+```
+
+---
+
+## 方法 3: CITEViz 环境准备
+
+创建一个完全兼容的环境。
+
+```{r prepare-compatible-env}
+if (FIX_METHOD == 3) {
+  cat(strrep("=", 80), "\n")
+  cat("准备 CITEViz 兼容环境\n")
+  cat(strrep("=", 80), "\n\n")
+
+  library(Seurat)
+  library(ggplot2)
+
+  # 设置全局 ggplot2 选项为旧版行为
+  cat("设置 ggplot2 兼容选项...\n")
+
+  options(
+    ggplot2.continuous.colour = "gradient",
+    ggplot2.continuous.fill = "gradient",
+    ggplot2.discrete.colour = NULL,
+    ggplot2.discrete.fill = NULL
+  )
+
+  # 使用简单主题
+  ggplot2::theme_set(ggplot2::theme_bw(base_size = 12))
+
+  cat("✓ 环境已配置\n\n")
+}
+```
+
+---
+
+## 3. 测试修复
+
+```{r test-fix}
+cat(strrep("=", 80), "\n")
+cat("测试 ggplot2 基本功能\n")
+cat(strrep("=", 80), "\n\n")
+
+library(ggplot2)
+
+# 创建测试数据
+test_data <- data.frame(
+  x = rnorm(100),
+  y = rnorm(100),
+  group = rep(c("A", "B"), each = 50)
+)
+
+# 测试基本绘图
+cat("测试 1: 基本散点图\n")
+tryCatch({
+  p <- ggplot(test_data, aes(x = x, y = y, color = group)) +
+    geom_point() +
+    theme_bw()
+  print(p)
+  cat("  ✓ 基本绘图正常\n\n")
+}, error = function(e) {
+  cat("  ✗ 基本绘图失败:", e$message, "\n\n")
+})
+
+# 测试带有复杂参数的绘图（类似 CITEViz 使用的）
+cat("测试 2: 复杂参数绘图\n")
+tryCatch({
+  p <- ggplot(test_data, aes(x = x, y = y)) +
+    geom_point(aes(color = group), size = 2) +
+    scale_color_manual(values = c("A" = "red", "B" = "blue")) +
+    theme_minimal()
+  print(p)
+  cat("  ✓ 复杂绘图正常\n\n")
+}, error = function(e) {
+  cat("  ✗ 复杂绘图失败:", e$message, "\n\n")
+})
+```
+
+---
+
+## 4. 使用修复后的 CITEViz
+
+### 4a. 如果使用方法 1（降级 ggplot2）
+
+```{r use-after-downgrade, eval=FALSE}
+# 重启 R 后运行
+
+library(CITEViz)
+library(Seurat)
+
+# 加载对象
+seurat_obj <- readRDS("results/citeviz/seurat_obj_citeviz_compatible.rds")
+
+# 启动 CITEViz
+CITEViz::run_app(seurat_obj)
+```
+
+### 4b. 如果使用方法 2（修补函数）
+
+```{r use-patched, eval=FALSE}
+# 确保已运行上面的方法 2 代码块
+
+# 加载对象
+seurat_obj <- readRDS("results/citeviz/seurat_obj_citeviz_compatible.rds")
+
+# 使用修补版本启动
+run_app_patched(seurat_obj)
+
+# 或者空启动
+run_app_patched()
+```
+
+### 4c. 如果使用方法 3（兼容环境）
+
+```{r use-compatible-env, eval=FALSE}
+# 确保已运行上面的方法 3 代码块
+
+library(CITEViz)
+
+# 加载对象
+seurat_obj <- readRDS("results/citeviz/seurat_obj_citeviz_compatible.rds")
+
+# 空启动（最安全）
+CITEViz::run_app()
+
+# 然后在网页中上传文件
+```
+
+---
+
+## 5. 最终建议
+
+根据错误类型选择最佳方案：
+
+### 如果错误是 "argument '..4' is missing"
+
+**推荐：方法 2（修补函数）**
+
+运行步骤：
+1. 运行本 Rmd 的方法 2 代码块
+2. 使用 `run_app_patched()` 启动
+
+### 如果 CITEViz 完全无法启动
+
+**推荐：方法 1（降级 ggplot2）**
+
+```r
+# 在新的 R session 中运行
+remove.packages("ggplot2")
+remotes::install_version("ggplot2", version = "3.3.6")
+
+# 重启 R
+# 然后正常使用 CITEViz
+```
+
+### 如果不想修改包版本
+
+**推荐：方法 3（兼容环境）+ 空启动**
+
+最安全的方式：
+```r
+# 运行方法 3 设置环境
+# 然后
+CITEViz::run_app()  # 空启动
+# 在网页中手动上传 .rds 文件
+```
+
+---
+
+## 6. 检查清单
+
+在启动 CITEViz 前确认：
+
+```{r final-checklist}
+cat(strrep("=", 80), "\n")
+cat("CITEViz 启动前检查清单\n")
+cat(strrep("=", 80), "\n\n")
+
+checklist <- list(
+  "Seurat 对象已准备" = FALSE,
+  "ADT assay 是 v3/v4 格式" = FALSE,
+  "ggplot2 版本兼容" = FALSE,
+  "CITEViz 包已加载" = FALSE,
+  "修补函数已创建（如果使用方法 2）" = FALSE
+)
+
+# 检查 Seurat 对象
+if (exists("seurat_obj")) {
+  checklist[["Seurat 对象已准备"]] <- TRUE
+
+  if ("ADT" %in% names(seurat_obj@assays)) {
+    if (class(seurat_obj@assays$ADT)[1] == "Assay") {
+      checklist[["ADT assay 是 v3/v4 格式"]] <- TRUE
+    }
+  }
+}
+
+# 检查 ggplot2
+if (packageVersion("ggplot2") < "3.4.0") {
+  checklist[["ggplot2 版本兼容"]] <- TRUE
+}
+
+# 检查 CITEViz
+if ("CITEViz" %in% loadedNamespaces()) {
+  checklist[["CITEViz 包已加载"]] <- TRUE
+}
+
+# 检查修补函数
+if (exists("run_app_patched")) {
+  checklist[["修补函数已创建（如果使用方法 2）"]] <- TRUE
+}
+
+# 显示检查结果
+for (item in names(checklist)) {
+  status <- if (checklist[[item]]) "✓" else "✗"
+  cat(status, item, "\n")
+}
+
+cat("\n")
+
+# 总结
+all_ok <- all(unlist(checklist[1:4]))
+if (all_ok) {
+  cat("✓ 所有必需项目已就绪，可以启动 CITEViz\n")
+} else {
+  cat("⚠ 请先完成上述检查项目\n")
+}
+```
+
+---
+
+## 会话信息
+
+```{r session-info}
+sessionInfo()
+```
