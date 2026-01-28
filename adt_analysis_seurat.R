@@ -1,19 +1,81 @@
 #!/usr/bin/env Rscript
-# 使用 Seurat 进行 ADT 分析 - 更快的替代方案
+# ============================================================================
+# Seurat ADT 分析 - CITEViz 替代方案
+# ============================================================================
+# 功能：使用 Seurat 原生函数进行 ADT（抗体）数据分析
+# 优点：无需 Shiny，100% Seurat v5 兼容，生成出版级图表
+# 输出：PDF 格式的静态图表
+# ============================================================================
 
 library(Seurat)
 library(ggplot2)
 library(patchwork)
+library(viridis)
+library(pheatmap)
 
-# 加载数据
-seurat_obj <- readRDS("results/cDC1/Robjects/seurat_obj_annotated.rds")
+cat("\n", strrep("=", 80), "\n")
+cat("Seurat ADT 分析（CITEViz 替代方案）\n")
+cat(strrep("=", 80), "\n\n")
+
+# ============================================================================
+# 1. 自动检测输入文件
+# ============================================================================
+cat("检测 Seurat 对象文件...\n")
+
+possible_input_files <- c(
+  "results/integrated/Robjects/seurat_obj_annotated.rds",
+  "results/integrated/Robjects/seurat_obj_for_annotation.rds",
+  "results/cDC1/Robjects/seurat_obj_annotated.rds",
+  "results/integrated/seurat_obj_annotated.rds",
+  "seurat_obj_annotated.rds",
+  "seurat_obj.rds"
+)
+
+INPUT_FILE <- NULL
+for (file_path in possible_input_files) {
+  if (file.exists(file_path)) {
+    INPUT_FILE <- file_path
+    cat("  ✓ 找到文件:", file_path, "\n")
+    break
+  }
+}
+
+if (is.null(INPUT_FILE)) {
+  cat("\n✗ 错误：未找到 Seurat 对象文件\n\n")
+  cat("查找的位置:\n")
+  for (file_path in possible_input_files) {
+    cat("  -", file_path, "\n")
+  }
+  cat("\n")
+  cat("解决方法:\n")
+  cat("  1. 运行下游分析生成 Seurat 对象:\n")
+  cat("     rmarkdown::render('4.downstream_analysis.Rmd')\n\n")
+  cat("  2. 或运行文件检测脚本:\n")
+  cat("     Rscript find_seurat_object.R\n\n")
+  cat("  3. 或手动指定文件路径:\n")
+  cat("     修改本脚本第 28 行的 possible_input_files 列表\n\n")
+  stop("缺少必需的输入文件")
+}
+
+cat("\n加载 Seurat 对象...\n")
+seurat_obj <- readRDS(INPUT_FILE)
+cat("  细胞数:", ncol(seurat_obj), "\n")
+cat("  基因数:", nrow(seurat_obj), "\n")
+cat("  Assay:", paste(names(seurat_obj@assays), collapse=", "), "\n\n")
+
+# 检查是否有 ADT 数据
+if (!"ADT" %in% names(seurat_obj@assays)) {
+  cat("✗ 错误：此 Seurat 对象没有 ADT 数据\n")
+  cat("  可用的 Assay:", paste(names(seurat_obj@assays), collapse=", "), "\n\n")
+  stop("缺少 ADT 数据")
+}
 
 # 输出目录
-output_dir <- "results/cDC1/ADT_analysis"
+output_dir <- "results/integrated/adt_analysis"
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
-cat("开始 ADT 分析（Seurat 版本 - 无需 Shiny）\n")
-cat("输出目录:", output_dir, "\n\n")
+cat("输出目录:", output_dir, "\n")
+cat(strrep("=", 80), "\n\n")
 
 # 1. ADT 双参数散点图（类似 FlowJo）
 cat("1. 生成 ADT 双参数散点图...\n")

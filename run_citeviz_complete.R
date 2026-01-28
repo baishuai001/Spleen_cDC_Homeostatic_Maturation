@@ -18,7 +18,51 @@ cat(strrep("=", 80), "\n\n")
 # 步骤 1: 格式转换
 # ============================================================================
 cat("[步骤 1/2] Seurat v5 → v4 格式转换\n")
-cat(strrep("-", 80), "\n")
+cat(strrep("-", 80), "\n\n")
+
+# 首先检查输入文件是否存在
+possible_input_files <- c(
+  "results/integrated/Robjects/seurat_obj_annotated.rds",
+  "results/integrated/Robjects/seurat_obj_for_annotation.rds",
+  "results/integrated/seurat_obj_annotated.rds",
+  "seurat_obj_annotated.rds",
+  "seurat_obj.rds"
+)
+
+input_found <- FALSE
+for (file_path in possible_input_files) {
+  if (file.exists(file_path)) {
+    cat("✓ 找到输入文件:", file_path, "\n")
+    input_found <- TRUE
+    break
+  }
+}
+
+if (!input_found) {
+  cat("✗ 未找到 Seurat 对象文件\n\n")
+  cat("查找的位置:\n")
+  for (file_path in possible_input_files) {
+    cat("  -", file_path, "\n")
+  }
+  cat("\n")
+  cat(strrep("=", 80), "\n")
+  cat("重要提示\n")
+  cat(strrep("=", 80), "\n\n")
+  cat("您需要先运行下游分析脚本生成 Seurat 对象文件。\n\n")
+  cat("步骤:\n")
+  cat("  1. 在 R 中运行下游分析:\n")
+  cat("     rmarkdown::render('4.downstream_analysis.Rmd')\n\n")
+  cat("  2. 这将生成文件:\n")
+  cat("     results/integrated/Robjects/seurat_obj_annotated.rds\n\n")
+  cat("  3. 然后重新运行本脚本:\n")
+  cat("     Rscript run_citeviz_complete.R\n\n")
+  cat("或者，如果您已有数据文件但在其他位置:\n")
+  cat("  - 运行检测脚本: Rscript find_seurat_object.R\n")
+  cat("  - 或手动指定路径（修改转换脚本中的 INPUT_FILE）\n\n")
+  stop("缺少必需的数据文件")
+}
+
+cat("\n开始转换...\n")
 
 conversion_result <- tryCatch({
   source("convert_seurat_v5_to_v4_for_citeviz.R", echo = FALSE)

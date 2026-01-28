@@ -21,9 +21,54 @@ cat("Seurat v5 → v4 格式转换（CITEViz 兼容）\n")
 cat(strrep("=", 80), "\n\n")
 
 # ============================================================================
-# 1. 配置参数
+# 1. 配置参数（自动检测输入文件）
 # ============================================================================
-INPUT_FILE <- "results/integrated/Robjects/seurat_obj_annotated.rds"
+
+# 自动检测可用的 Seurat 对象文件
+possible_input_files <- c(
+  "results/integrated/Robjects/seurat_obj_annotated.rds",
+  "results/integrated/Robjects/seurat_obj_for_annotation.rds",
+  "results/integrated/seurat_obj_annotated.rds",
+  "seurat_obj_annotated.rds",
+  "seurat_obj.rds"
+)
+
+INPUT_FILE <- NULL
+for (file_path in possible_input_files) {
+  if (file.exists(file_path)) {
+    INPUT_FILE <- file_path
+    break
+  }
+}
+
+# 如果没有找到文件，显示错误信息
+if (is.null(INPUT_FILE)) {
+  cat("\n", strrep("=", 80), "\n")
+  cat("错误：未找到 Seurat 对象文件\n")
+  cat(strrep("=", 80), "\n\n")
+
+  cat("查找的位置:\n")
+  for (file_path in possible_input_files) {
+    cat("  ✗", file_path, "\n")
+  }
+
+  cat("\n可能的原因:\n")
+  cat("  1. 您还没有运行前面的下游分析步骤\n")
+  cat("  2. Seurat 对象文件在其他位置\n\n")
+
+  cat("解决方法:\n")
+  cat("  1. 运行下游分析生成 Seurat 对象:\n")
+  cat("     在 R 中执行: rmarkdown::render('4.downstream_analysis.Rmd')\n\n")
+
+  cat("  2. 或者手动指定输入文件:\n")
+  cat("     修改本脚本第 15 行的 INPUT_FILE 变量\n\n")
+
+  cat("  3. 运行文件检测脚本:\n")
+  cat("     Rscript find_seurat_object.R\n\n")
+
+  stop("缺少必需的输入文件")
+}
+
 OUTPUT_FILE <- "results/integrated/Robjects/seurat_obj_citeviz_v4_compatible.rds"
 
 # 是否降采样（推荐：用于大数据集，加快 CITEViz 加载速度）
